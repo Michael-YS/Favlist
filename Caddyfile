@@ -1,0 +1,5 @@
+# Optional HTTPS edge proxy; Docker Compose supplies APP_DOMAIN at runtime.
+{$APP_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy web:80
+}
