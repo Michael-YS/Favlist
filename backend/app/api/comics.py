@@ -79,7 +79,12 @@ async def list_comics(
     statement = select(Comic)
     if search and search.strip():
         term = search.strip()
-        conditions = [Comic.title.ilike(f"%{term}%"), Comic.author.ilike(f"%{term}%")]
+        pattern = f"%{term}%"
+        conditions = [
+            Comic.title.ilike(pattern),
+            Comic.author.ilike(pattern),
+            Comic.tag_links.any(ComicTag.tag.has(Tag.name.ilike(pattern))),
+        ]
         normalized_id = term[2:] if term.lower().startswith("jm") else term
         if normalized_id.isdigit():
             conditions.append(cast(Comic.id, String).contains(str(int(normalized_id))))

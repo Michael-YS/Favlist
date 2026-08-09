@@ -200,6 +200,114 @@ def test_import_list_refresh_delete_and_export(client: TestClient) -> None:
     assert client.get("/api/comics").json()["total"] == 0
 
 
+def test_search_matches_metadata_and_tags_without_duplicates(client: TestClient) -> None:
+    """Combine substring tag search with metadata search and exact AND tag filters."""
+    _login(client)
+
+    async def seed_searchable_comics() -> None:
+        """Persist metadata and shared tags that exercise every search predicate."""
+        space_adventure = Tag(name="Space Adventure")
+        space_opera = Tag(name="SpAcE Opera")
+        shared = Tag(name="Shared")
+        second = Tag(name="Second")
+        other = Tag(name="Other")
+        comics = [
+            Comic(
+                id=101,
+                title="First Shelf",
+                author="Alice",
+                status=ComicStatus.READY,
+                tag_links=[
+                    ComicTag(tag=space_adventure, position=0),
+                    ComicTag(tag=shared, position=1),
+                ],
+            ),
+            Comic(
+                id=202,
+                title="Second Shelf",
+                author="Bob",
+                status=ComicStatus.READY,
+                tag_links=[
+                    ComicTag(tag=space_opera, position=0),
+                    ComicTag(tag=shared, position=1),
+                    ComicTag(tag=second, position=2),
+                ],
+            ),
+            Comic(
+                id=303,
+                title="Third Shelf",
+                author="Carol",
+                status=ComicStatus.READY,
+                tag_links=[
+                    ComicTag(tag=space_adventure, position=0),
+                    ComicTag(tag=space_opera, position=1),
+                ],
+            ),
+            Comic(
+                id=404,
+                title="Needle Title",
+                author="Dora",
+                status=ComicStatus.READY,
+                tag_links=[ComicTag(tag=other, position=0)],
+            ),
+            Comic(
+                id=505,
+                title="Fifth Shelf",
+                author="Needle Author",
+                status=ComicStatus.READY,
+                tag_links=[ComicTag(tag=other, position=0)],
+            ),
+            Comic(id=12345, title="ID Target", author="Eve", status=ComicStatus.READY),
+        ]
+        async with client.app.state.session_factory() as session:
+            session.add_all(comics)
+            await session.commit()
+
+    assert client.portal is not None
+    client.portal.call(seed_searchable_comics)
+
+    partial = client.get(
+        "/api/comics", params={"search": "aDvEnT", "sort": "id_asc"}
+    ).json()
+    assert partial["total"] == 2
+    assert [item["id"] for item in partial["items"]] == [101, 303]
+
+    multiple_matching_tags = client.get(
+        "/api/comics",
+        params={"search": "sPaCe", "sort": "id_asc", "page_size": 2},
+    ).json()
+    assert multiple_matching_tags["total"] == 3
+    assert [item["id"] for item in multiple_matching_tags["items"]] == [101, 202]
+    second_page = client.get(
+        "/api/comics",
+        params={"search": "sPaCe", "sort": "id_asc", "page_size": 2, "page": 2},
+    ).json()
+    assert second_page["total"] == 3
+    assert [item["id"] for item in second_page["items"]] == [303]
+
+    combined = client.get(
+        "/api/comics",
+        params=[
+            ("search", "space"),
+            ("tag", "Shared"),
+            ("tag", "Second"),
+            ("sort", "id_asc"),
+        ],
+    ).json()
+    assert combined["total"] == 1
+    assert [item["id"] for item in combined["items"]] == [202]
+
+    assert client.get("/api/comics", params={"search": "needle title"}).json()[
+        "items"
+    ][0]["id"] == 404
+    assert client.get("/api/comics", params={"search": "NEEDLE AUTHOR"}).json()[
+        "items"
+    ][0]["id"] == 505
+    assert client.get("/api/comics", params={"search": "JM12345"}).json()["items"][
+        0
+    ]["id"] == 12345
+
+
 def test_logout_revokes_a_copied_cookie(client: TestClient) -> None:
     """Make a copied signed cookie unusable after its server-side session is revoked."""
     _login(client)
