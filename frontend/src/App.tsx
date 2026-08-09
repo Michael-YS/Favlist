@@ -79,9 +79,15 @@ function Login({ onLogin }: LoginProps) {
 
   return (
     <main className="login-shell">
+      <section className="login-intro" aria-hidden="true">
+        <span className="login-index">PRIVATE COLLECTION</span>
+        <div className="login-spines"><i /><i /><i /><i /></div>
+        <p>把喜欢的作品，整理成一座随时可以返回的私人档案馆。</p>
+      </section>
       <form className="panel login" onSubmit={submit}>
+        <p className="eyebrow">私人收藏档案</p>
         <h1>Favlist</h1>
-        <p className="muted">登录以访问你的私人收藏。</p>
+        <p className="muted">登录以整理、检索和维护你的收藏。</p>
         <label>
           用户名
           <input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
@@ -101,7 +107,7 @@ function Login({ onLogin }: LoginProps) {
 function ComicRow({ comic, selected, onSelect, onOpen, onRefresh }: ComicRowProps) {
   const title = comic.title || "等待获取标题";
   return (
-    <article className="comic-row">
+    <article className="comic-row" data-comic-id={`JM ${comic.id}`}>
       <input aria-label={`选择 JM${comic.id}`} type="checkbox" checked={selected} onChange={() => onSelect(comic.id)} />
       <button className="cover-button" onClick={() => onOpen(comic.id)} aria-label={`查看 JM${comic.id} 详情`}>
         <img className="cover" src={coverUrl(comic)} alt={`${title} 封面`} />
@@ -270,12 +276,13 @@ function Library({ onLogout }: LibraryProps) {
 
   return (
     <main className="app-shell">
-      <header><div><h1>Favlist</h1><span className="muted">{total} 条</span></div><nav><a className="button-link secondary" href="/api/export/ids">导出</a><button onClick={() => setShowImport(true)}>导入</button><button className="secondary" onClick={() => void logout()}>退出</button></nav></header>
-      <section className="toolbar panel"><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>
-      {tags.length > 0 && <section className="facet-bar" aria-label="标签筛选">{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</section>}
+      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div><nav><a className="button-link secondary" href="/api/export/ids">导出</a><button aria-label="导入" onClick={() => setShowImport(true)}>＋ 导入编号</button><button className="secondary" onClick={() => void logout()}>退出</button></nav></header>
+      <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>
+      {tags.length > 0 && <section className="facet-bar" aria-label="标签筛选"><span className="facet-label">标签索引</span><div>{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
       {selected.length > 0 && <section className="bulk panel"><strong>已选 {selected.length} 条</strong><button onClick={() => void refreshSelected()}>批量刷新</button><button className="danger" onClick={() => void deleteSelected()}>删除</button></section>}
       {error && <p className="error" role="alert">{error}</p>}
-      <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">加载中…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} />)}{!loading && items.length === 0 && <div className="empty panel">还没有条目。点击“导入”开始。</div>}</section>
+      <div className="catalogue-heading"><h2>馆藏目录</h2><p>封面与编号共同构成检索入口</p></div>
+      <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理馆藏…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有条目。点击“导入”开始。</strong><span>导入 JM 编号，建立你的第一份收藏档案。</span><button onClick={() => setShowImport(true)}>导入编号</button></div>}</section>
       <footer className="pager"><button disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>上一页</button><span>第 {page} 页</span><button disabled={page * 50 >= total || loading} onClick={() => setPage((current) => current + 1)}>下一页</button></footer>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={() => void load()} />}
       {detail && <DetailDrawer comic={detail} onClose={() => setDetail(null)} />}
