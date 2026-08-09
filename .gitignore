@@ -27,3 +27,4 @@ codex-security/
 *codex-security*.sarif
 /backend.tar
 /frontend.tar
+/.codex/
