@@ -1,0 +1,9 @@
+# Example ordered tag emphasis configuration for Favlist.
+ui:
+  # These labels appear first when space is limited, in the listed order.
+  disliked_tags:
+    - 不喜欢的标签
+    - 示例：待整理
+  liked_tags:
+    - 喜欢的标签
+    - 示例：精选

@@ -1,0 +1,5 @@
+# Ordered tag emphasis configuration used by the API and UI.
+ui:
+  # Earlier entries have higher display priority within each group.
+  disliked_tags: []
+  liked_tags: []
