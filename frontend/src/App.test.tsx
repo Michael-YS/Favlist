@@ -54,6 +54,13 @@ describe("visibleTags", () => {
 });
 
 describe("responsive visual contract", () => {
+  it("folds desktop facets into one scrollable row with a visible disclosure button", () => {
+    expect(styles).toMatch(/\.facet-bar\s*\{[^}]*grid-template-columns:auto minmax\(0,1fr\) auto/);
+    expect(styles).toMatch(/\.facet-bar\s*>\s*div\s*\{[^}]*flex-wrap:nowrap;[^}]*max-height:30px;[^}]*overflow-x:auto/);
+    expect(styles).toMatch(/\.facet-toggle\s*\{[^}]*display:grid/);
+    expect(styles).toMatch(/\.facet-bar\.expanded\s*>\s*div\s*\{[^}]*flex-wrap:wrap;[^}]*max-height:none;[^}]*overflow:visible/);
+  });
+
   it("uses distinct disliked colours in light and dark themes", () => {
     expect(styles).toContain("--disliked-bg:#fee4e2");
     expect(styles).toContain("--disliked-bg:#571815");
@@ -71,9 +78,41 @@ describe("responsive visual contract", () => {
     expect(styles).toMatch(/max-width:700px[\s\S]*?\.comic-row\s*\{\s*grid-template-columns:/);
     expect(styles).toMatch(/max-width:700px[\s\S]*?\.mobile-tags\s*\{\s*display:inline/);
   });
+
+  it("folds the mobile facet list to one row and keeps the ribbon in its grid column", () => {
+    expect(styles).toMatch(/max-width:700px[\s\S]*?\.facet-bar\.expanded\s*>\s*div\s*\{[^}]*grid-column:1\/-1;[^}]*grid-row:2/);
+    expect(styles).toMatch(/\.facet-bar\s*>\s*div\s*>\s*\.tag\s*\{[^}]*flex:0 0 auto;[^}]*white-space:nowrap/);
+    expect(styles).toMatch(/\.comic-row::before\s*\{[^}]*grid-column:1;[^}]*grid-row:1/);
+    expect(styles).not.toMatch(/\.comic-row::before\s*\{[^}]*position:absolute/);
+  });
+
+  it("stretches the mobile cover and ribbon across the complete card height", () => {
+    expect(styles).toMatch(/max-width:700px[\s\S]*?\.comic-row::before\s*\{[^}]*grid-row:1\/-1/);
+    expect(styles).toMatch(/max-width:700px[\s\S]*?\.cover-button\s*\{[^}]*grid-row:1\/-1/);
+  });
 });
 
 describe("App", () => {
+  it("expands and collapses the tag filter with the mobile disclosure button", async () => {
+    const tags = Array.from({ length: 8 }, (_, index) => ({ name: `标签${index}`, emphasis: "normal" as const, count: index + 1 }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return Response.json({ username: "admin" });
+      if (url.startsWith("/api/comics?")) return Response.json({ items: [], total: 0, page: 1, page_size: 50 });
+      if (url.endsWith("/api/tags")) return Response.json(tags);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    const toggle = await screen.findByRole("button", { name: "展开标签筛选" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "收起标签筛选" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "收起标签筛选" }));
+    expect(screen.getByRole("button", { name: "展开标签筛选" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("shows authentication loading and then exposes a list failure", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

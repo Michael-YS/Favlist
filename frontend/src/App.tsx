@@ -191,6 +191,7 @@ function Library({ onLogout }: LibraryProps) {
   const [sort, setSort] = useState("added_desc");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [facetsExpanded, setFacetsExpanded] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
   const [detail, setDetail] = useState<Comic | null>(null);
   const [showImport, setShowImport] = useState(false);
@@ -278,7 +279,7 @@ function Library({ onLogout }: LibraryProps) {
     <main className="app-shell">
       <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div><nav><a className="button-link secondary" href="/api/export/ids">导出</a><button aria-label="导入" onClick={() => setShowImport(true)}>＋ 导入编号</button><button className="secondary" onClick={() => void logout()}>退出</button></nav></header>
       <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>
-      {tags.length > 0 && <section className="facet-bar" aria-label="标签筛选"><span className="facet-label">标签索引</span><div>{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
+      {tags.length > 0 && <section className={`facet-bar ${facetsExpanded ? "expanded" : ""}`} aria-label="标签筛选"><span className="facet-label">标签索引</span><button type="button" className="facet-toggle" aria-expanded={facetsExpanded} aria-controls="facet-list" aria-label={facetsExpanded ? "收起标签筛选" : "展开标签筛选"} onClick={() => setFacetsExpanded((current) => !current)}><span aria-hidden="true">⌄</span></button><div id="facet-list">{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
       {selected.length > 0 && <section className="bulk panel"><strong>已选 {selected.length} 条</strong><button onClick={() => void refreshSelected()}>批量刷新</button><button className="danger" onClick={() => void deleteSelected()}>删除</button></section>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="catalogue-heading"><h2>馆藏目录</h2><p>封面与编号共同构成检索入口</p></div>
