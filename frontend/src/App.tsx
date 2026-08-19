@@ -4,7 +4,7 @@
  * The server owns all filtering and tag prioritisation rules; this view only
  * presents the supplied data and coordinates requests made through `api`.
  */
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { TagPills } from "./components/TagPills";
 import { visibleTags } from "./lib/tags";
@@ -18,6 +18,7 @@ interface LoginProps {
 
 interface ComicRowProps {
   comic: Comic;
+  sensitiveVisible: boolean;
   selected: boolean;
   onSelect: (id: number) => void;
   onOpen: (id: number) => void;
@@ -53,6 +54,11 @@ function errorMessage(reason: unknown, fallback: string): string {
 /** Build the authenticated cover URL, including the server-managed cache version. */
 function coverUrl(comic: Comic): string {
   return `/api/comics/${comic.id}/cover?v=${comic.cover_version}`;
+}
+
+/** Join every ASCII digit in a sentence into the one identifier it encodes. */
+function extractQuickRecordId(text: string): string {
+  return text.match(/[0-9]/g)?.join("") ?? "";
 }
 
 /** Render the login form for the sole administrator account. */
@@ -104,21 +110,21 @@ function Login({ onLogin }: LoginProps) {
 }
 
 /** Render one responsive horizontal comic row. */
-function ComicRow({ comic, selected, onSelect, onOpen, onRefresh }: ComicRowProps) {
+function ComicRow({ comic, sensitiveVisible, selected, onSelect, onOpen, onRefresh }: ComicRowProps) {
   const title = comic.title || "等待获取标题";
   return (
-    <article className="comic-row" data-comic-id={`JM ${comic.id}`}>
+    <article className={`comic-row ${sensitiveVisible ? "" : "private-row"}`} data-comic-id={`JM ${comic.id}`}>
       <input aria-label={`选择 JM${comic.id}`} type="checkbox" checked={selected} onChange={() => onSelect(comic.id)} />
-      <button className="cover-button" onClick={() => onOpen(comic.id)} aria-label={`查看 JM${comic.id} 详情`}>
+      {sensitiveVisible && <button className="cover-button" onClick={() => onOpen(comic.id)} aria-label={`查看 JM${comic.id} 详情`}>
         <img className="cover" src={coverUrl(comic)} alt={`${title} 封面`} />
-      </button>
+      </button>}
       <div className="identity">
         <strong>JM{comic.id}</strong>
-        <button className="title-link" onClick={() => onOpen(comic.id)}>{title}</button>
+        {sensitiveVisible && <button className="title-link" onClick={() => onOpen(comic.id)}>{title}</button>}
       </div>
-      <span className="author">{comic.author || "—"}</span>
-      <TagPills tags={comic.tags} />
-      <span className={`status ${comic.status}`} title={comic.error ?? undefined}>{comic.status}</span>
+      {sensitiveVisible && <span className="author">{comic.author || "—"}</span>}
+      {sensitiveVisible && <TagPills tags={comic.tags} />}
+      <span className={`status ${comic.status}`} title={sensitiveVisible ? comic.error ?? undefined : undefined}>{comic.status}</span>
       <button className="icon-button" onClick={() => onRefresh(comic.id)} aria-label={`刷新 JM${comic.id}`}>↻</button>
     </article>
   );
@@ -195,8 +201,15 @@ function Library({ onLogout }: LibraryProps) {
   const [selected, setSelected] = useState<number[]>([]);
   const [detail, setDetail] = useState<Comic | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [sensitiveVisible, setSensitiveVisible] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [quickText, setQuickText] = useState("");
+  const [quickFeedback, setQuickFeedback] = useState("");
+  const [quickError, setQuickError] = useState("");
+  const [quickBusy, setQuickBusy] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   /** Derive the server query from the current pagination and filter controls. */
   const query = useMemo(() => {
@@ -224,6 +237,46 @@ function Library({ onLogout }: LibraryProps) {
 
   /** Load server state when any list control changes. */
   useEffect(() => { void load(); }, [load]);
+
+  /** Restore the non-sensitive default and discard controls that can expose metadata. */
+  const concealSensitive = useCallback((): void => {
+    setSensitiveVisible(false);
+    setMenuOpen(false);
+    setDetail(null);
+    setSearch("");
+    setSelectedTags([]);
+    setFacetsExpanded(false);
+  }, []);
+
+  /** Conceal the catalogue whenever the browser leaves or backgrounds this page. */
+  useEffect(() => {
+    const handleVisibility = (): void => {
+      if (document.visibilityState === "hidden") concealSensitive();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", concealSensitive);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", concealSensitive);
+    };
+  }, [concealSensitive]);
+
+  /** Close the secondary menu after an outside click or Escape key press. */
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleMouseDown = (event: MouseEvent): void => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen]);
 
   /** Reload available facets after a list-changing request. */
   useEffect(() => {
@@ -270,6 +323,37 @@ function Library({ onLogout }: LibraryProps) {
     try { await api.delete(selected); setSelected([]); await load(); } catch (reason) { setError(errorMessage(reason, "删除失败，请稍后重试。")); }
   }
 
+  /** Extract one encoded identifier and record it without an extra confirmation step. */
+  async function submitQuickRecord(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (quickBusy) return;
+    const identifier = extractQuickRecordId(quickText);
+    setQuickFeedback("");
+    setQuickError("");
+    if (!identifier) {
+      setQuickError("这句话里没有可记录的数字。");
+      return;
+    }
+    setQuickBusy(true);
+    try {
+      const summary = await api.importIds(identifier);
+      if (summary.added > 0) {
+        setQuickText("");
+        setQuickFeedback("已记录");
+        await load();
+      } else if (summary.duplicate > 0) {
+        setQuickText("");
+        setQuickFeedback("已经记录过");
+      } else {
+        setQuickError("提取出的编号无法记录。");
+      }
+    } catch (reason) {
+      setQuickError(errorMessage(reason, "记录失败，请稍后重试。"));
+    } finally {
+      setQuickBusy(false);
+    }
+  }
+
   /** Sign out of the session and switch the top-level application state. */
   async function logout(): Promise<void> {
     try { await api.logout(); onLogout(); } catch (reason) { setError(errorMessage(reason, "退出失败，请稍后重试。")); }
@@ -277,16 +361,17 @@ function Library({ onLogout }: LibraryProps) {
 
   return (
     <main className="app-shell">
-      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div><nav><a className="button-link secondary" href="/api/export/ids">导出</a><button aria-label="导入" onClick={() => setShowImport(true)}>＋ 导入编号</button><button className="secondary" onClick={() => void logout()}>退出</button></nav></header>
-      <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>
-      {tags.length > 0 && <section className={`facet-bar ${facetsExpanded ? "expanded" : ""}`} aria-label="标签筛选"><span className="facet-label">标签索引</span><button type="button" className="facet-toggle" aria-expanded={facetsExpanded} aria-controls="facet-list" aria-label={facetsExpanded ? "收起标签筛选" : "展开标签筛选"} onClick={() => setFacetsExpanded((current) => !current)}><span aria-hidden="true">⌄</span></button><div id="facet-list">{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
+      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div><div className="more" ref={menuRef}><button className="more-toggle secondary" aria-label="更多操作" aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen((current) => !current)}>•••</button>{menuOpen && <nav className="more-menu panel" id="more-menu" aria-label="更多操作菜单"><button onClick={() => { if (sensitiveVisible) concealSensitive(); else { setSensitiveVisible(true); setMenuOpen(false); } }}>{sensitiveVisible ? "隐藏敏感内容" : "显示敏感内容"}</button><button className="secondary" onClick={() => { setShowImport(true); setMenuOpen(false); }}>批量导入</button><a className="button-link secondary" href="/api/export/ids" onClick={() => setMenuOpen(false)}>导出编号</a><button className="secondary" onClick={() => { setMenuOpen(false); void logout(); }}>退出</button></nav>}</div></header>
+      <form className="quick-record panel" onSubmit={submitQuickRecord} aria-label="快速记录"><label htmlFor="quick-record-input"><span>快速记录</span><small>句子里的数字会按顺序合并</small></label><div><input id="quick-record-input" aria-label="快速记录" autoComplete="off" enterKeyHint="done" spellCheck={false} placeholder="粘贴一句话" value={quickText} onChange={(event) => { setQuickText(event.target.value); setQuickFeedback(""); setQuickError(""); }} /><button disabled={quickBusy}>{quickBusy ? "记录中…" : "记录"}</button></div>{quickFeedback && <p className="quick-feedback" role="status">{quickFeedback}</p>}{quickError && <p className="error" role="alert">{quickError}</p>}</form>
+      {sensitiveVisible && <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>}
+      {sensitiveVisible && tags.length > 0 && <section className={`facet-bar ${facetsExpanded ? "expanded" : ""}`} aria-label="标签筛选"><span className="facet-label">标签索引</span><button type="button" className="facet-toggle" aria-expanded={facetsExpanded} aria-controls="facet-list" aria-label={facetsExpanded ? "收起标签筛选" : "展开标签筛选"} onClick={() => setFacetsExpanded((current) => !current)}><span aria-hidden="true">⌄</span></button><div id="facet-list">{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
       {selected.length > 0 && <section className="bulk panel"><strong>已选 {selected.length} 条</strong><button onClick={() => void refreshSelected()}>批量刷新</button><button className="danger" onClick={() => void deleteSelected()}>删除</button></section>}
       {error && <p className="error" role="alert">{error}</p>}
-      <div className="catalogue-heading"><h2>馆藏目录</h2><p>封面与编号共同构成检索入口</p></div>
-      <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理馆藏…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有条目。点击“导入”开始。</strong><span>导入 JM 编号，建立你的第一份收藏档案。</span><button onClick={() => setShowImport(true)}>导入编号</button></div>}</section>
+      <div className="catalogue-heading"><h2>{sensitiveVisible ? "馆藏目录" : "记录目录"}</h2><p>{sensitiveVisible ? "封面与编号共同构成检索入口" : "隐私模式 · 仅显示编号与状态"}</p></div>
+      <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理记录…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} sensitiveVisible={sensitiveVisible} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有记录。</strong><span>在上方粘贴一句话，或从“更多”中批量导入。</span></div>}</section>
       <footer className="pager"><button disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>上一页</button><span>第 {page} 页</span><button disabled={page * 50 >= total || loading} onClick={() => setPage((current) => current + 1)}>下一页</button></footer>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={() => void load()} />}
-      {detail && <DetailDrawer comic={detail} onClose={() => setDetail(null)} />}
+      {sensitiveVisible && detail && <DetailDrawer comic={detail} onClose={() => setDetail(null)} />}
     </main>
   );
 }
@@ -312,4 +397,4 @@ export function App() {
   return <><button className="theme-toggle" aria-label="切换主题" onClick={toggleTheme}>{theme === "dark" ? "☀" : "☾"}</button>{authenticated ? <Library onLogout={() => setAuthenticated(false)} /> : <Login onLogin={() => setAuthenticated(true)} />}</>;
 }
 
-export { visibleTags };
+export { extractQuickRecordId, visibleTags };

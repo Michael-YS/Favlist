@@ -3,7 +3,41 @@
 
 单用户、自托管的收藏清单：React 前端、FastAPI 后端和 SQLite 持久化。它只保存外部服务元数据及 WebP 封面，不下载条目正文。
 
+> [!IMPORTANT]
+> Favlist 是私人收藏索引，不是下载器、阅读器或多用户服务。请只在你有权访问外部服务内容的网络环境中使用。
+
+## 功能
+
+- 批量导入 `ID123`、纯数字编号或混合分隔文本，自动去重并异步补全元数据。
+- 首页快速记录可将一句话中的所有 ASCII 数字按顺序拼成一个编号并直接保存。
+- 按编号、标题、作者和标签搜索；支持多标签交集筛选、分页与多种排序。
+- 缓存并按需恢复 WebP 封面，展示作者、简介、页数、发布日期和互动统计。
+- 单条或批量刷新元数据，批量删除记录，并将全部编号导出为 UTF-8 文本。
+- 用 `config.yaml` 配置喜欢/不喜欢标签的显示强调和优先顺序。
+- 默认隐私模式不渲染封面、标题、作者或标签；可从“更多”菜单临时显示，页面进入后台后自动隐藏。
+- 响应式明暗主题，适配桌面与移动端 Firefox。
+- 单管理员登录、可撤销服务端会话、CSRF 校验和登录限流。
+
+## 技术栈与架构
+
+| 层 | 实现 |
+| --- | --- |
+| Web | React、TypeScript、Vite；生产环境由 Nginx 提供静态文件和同源 `/api` 代理 |
+| API | FastAPI、SQLAlchemy asyncio、后台任务队列 |
+| 数据 | SQLite 数据库与本地 WebP 封面缓存 |
+| 部署 | Docker Compose；可选 Caddy 自动 HTTPS |
+
+默认请求链路为：`浏览器 → web (Nginx) → api (FastAPI) → SQLite / 封面缓存`。启用 Caddy profile 后，Caddy 位于 `web` 前方负责公网 TLS。数据库和封面都存放在 `favlist-data` Docker 卷中。
+
+## 使用
+
+登录后，首页默认只显示编号和处理状态，不会创建封面图片请求，也不会把标题、作者或标签放入页面。需要浏览完整馆藏时，打开右上角“更多”，选择“显示敏感内容”；切换标签页、让浏览器进入后台、离开或刷新页面后会恢复隐私模式。
+
+“快速记录”适合从普通句子中保存一个约定编号。它只提取 ASCII 数字 `0-9`，并按出现顺序拼接：`小明12天做了3本作业，错了45道题，用掉6支笔` 会记录为 `ID123456`。中文数字和全角数字不会被提取；一次需要保存多个独立编号时，使用“更多”菜单中的“批量导入”。
+
 ## 快速开始（Docker，推荐）
+
+需要 Docker Engine 或 Docker Desktop，并启用 Compose v2（`docker compose`）。
 
 1. 复制环境模板：`Copy-Item .env.example .env`（PowerShell）或 `cp .env.example .env`。
 2. 生成管理员密码哈希并将输出完整填入 `.env` 的 `ADMIN_PASSWORD_HASH`：
@@ -18,6 +52,32 @@
 6. 打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)，使用 `.env` 中的管理员用户名和原始密码登录。
 
 Compose 将网页和 API 分别限制在 `127.0.0.1:${WEB_PORT}` 与 `127.0.0.1:${API_PORT}`，SQLite 数据库和封面保存在名为 `favlist-data` 的 Docker 卷中。正常重建容器不会删除此卷；若要有意清空所有数据，执行 `docker compose down -v`（不可恢复）。查看日志用 `docker compose logs -f api web`。
+
+### 常用运维命令
+
+```powershell
+# 查看状态与日志
+docker compose ps
+docker compose logs -f api web
+
+# 拉取代码后重建升级（不会删除数据卷）
+git pull --ff-only
+docker compose up -d --build
+
+# 停止或重新启动
+docker compose stop
+docker compose start
+```
+
+升级前建议备份 `favlist-data`。为了获得一致的 SQLite 快照，先停止 API，再将卷归档到当前目录：
+
+```powershell
+docker compose stop api
+docker run --rm -v favlist_favlist-data:/data -v "${PWD}:/backup" alpine tar -czf /backup/favlist-data.tar.gz -C /data .
+docker compose start api
+```
+
+Compose 项目名固定为 `favlist`，所以默认卷名是 `favlist_favlist-data`；如曾用外部工具改名，请先运行 `docker volume ls` 确认。备份文件包含收藏数据库和封面，应按敏感数据保管。恢复会覆盖现有数据，操作前请先停止服务并再次备份当前卷。
 
 ## 本地开发
 
@@ -53,6 +113,19 @@ npm run dev
 Docker 的同源部署应保持 `CORS_ALLOWED_ORIGINS` 为空；仅当前后端分开运行时填写精确 origin，不允许 `*`。Compose 使用固定内部网段，API 默认只信任固定的 `web` 代理地址 `172.30.55.10/32`。项目内 Nginx 只接受固定 `caddy` 地址和 `TRUSTED_EDGE_PROXY` 提供的客户端 IP，并在转发到 API 前覆写外部转发头。默认 `TRUSTED_EDGE_PROXY=172.30.55.1` 是宿主机在默认 Docker 网络内的网关地址。脱离 Compose 运行时，`TRUSTED_PROXY_CIDRS` 只填写确定受信任的直连反向代理地址；为空时不采信可伪造的转发 IP 头。
 
 
+
+常用环境变量：
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `ADMIN_PASSWORD_HASH` | 是 | 管理员密码的 Argon2 哈希，不能填写明文密码 |
+| `SESSION_SECRET` | 是 | 至少 32 个字符的独立随机密钥 |
+| `ADMIN_USERNAME` | 否 | 管理员用户名，默认 `admin` |
+| `COOKIE_SECURE` | 公网 HTTPS 时 | 公网部署必须设为 `true` |
+| `WEB_PORT` / `API_PORT` | 否 | 仅绑定宿主机回环地址的本地端口 |
+| `APP_DOMAIN` | Caddy profile 时 | Caddy 申请证书所用的公网域名 |
+
+完整默认值和封面安全限制以 [`.env.example`](.env.example) 为准。
 
 ## 公网 HTTPS（可选 Caddy profile）
 
@@ -100,8 +173,30 @@ server {
 
 ## 测试与验证
 
-后端：`cd backend; pytest`。
+```powershell
+# 后端
+cd backend
+pytest
 
-前端：`cd frontend; npm ci; npm test`。生产构建：`cd frontend; npm run build`。
+# 前端
+cd ../frontend
+npm ci
+npm test
+npm run build
 
-部署配置可先检查：`docker compose config`；启动后确认 `docker compose ps` 显示 `api` 和 `web` 正常运行。测试不会调用真实外部服务，使用注入的模拟客户端。
+# 回到项目根目录检查部署配置
+cd ..
+docker compose config
+```
+
+启动后确认 `docker compose ps` 显示 `api` 和 `web` 正常运行。自动化测试不会调用真实外部服务，而是使用注入的模拟客户端。
+
+## 项目结构
+
+```text
+backend/app/       FastAPI、数据库、认证、外部服务客户端、任务与封面处理
+backend/tests/     后端单元及 API 测试
+frontend/src/      React 界面、API 客户端与前端测试
+config.yaml        有序标签强调配置
+docker-compose.yml 本地部署与可选 Caddy profile
+```

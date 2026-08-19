@@ -1,7 +1,7 @@
 /** Component tests for imports, details, bulk actions, tag folding, and themes. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App, extractQuickRecordId } from "./App";
 import { api } from "./api";
 import { visibleTags } from "./lib/tags";
 import styles from "./styles.css?raw";
@@ -32,6 +32,7 @@ function installApiMock(page: ComicPage): ReturnType<typeof vi.fn> {
 /** Set up browser APIs and a default authenticated empty library before each test. */
 beforeEach(() => {
   localStorage.clear();
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
   installApiMock({ items: [], total: 0, page: 1, page_size: 50 });
 });
@@ -50,6 +51,18 @@ describe("visibleTags", () => {
     const tags = comicFixture().tags;
     expect(visibleTags(tags, true)).toEqual({ shown: tags.slice(0, 2), hidden: 1 });
     expect(visibleTags(tags, true).shown.map((tag) => tag.emphasis)).toEqual(["disliked", "liked"]);
+  });
+});
+
+describe("extractQuickRecordId", () => {
+  it.each([
+    ["小明12天做了3本暑假作业，错了45道题，用掉6支笔", "123456"],
+    ["第1段有23，第4段有567", "1234567"],
+    ["编号 001-234-567-890", "001234567890"],
+    ["标点：9，8。7！6？5；4", "987654"],
+    ["中文一二三，全角１２３", ""],
+  ])("joins only ASCII digits from %s", (text, expected) => {
+    expect(extractQuickRecordId(text)).toBe(expected);
   });
 });
 
@@ -90,6 +103,12 @@ describe("responsive visual contract", () => {
     expect(styles).toMatch(/max-width:700px[\s\S]*?\.comic-row::before\s*\{[^}]*grid-row:1\/-1/);
     expect(styles).toMatch(/max-width:700px[\s\S]*?\.cover-button\s*\{[^}]*grid-row:1\/-1/);
   });
+
+  it("provides compact private rows and a responsive quick-record strip", () => {
+    expect(styles).toMatch(/\.private-row\s*\{[^}]*grid-template-columns:38px minmax\(160px,1fr\) 84px 48px;[^}]*min-height:74px/);
+    expect(styles).toMatch(/\.quick-record\s*\{[^}]*border-left:6px solid var\(--signal\)/);
+    expect(styles).toMatch(/max-width:700px[\s\S]*?\.comic-row\.private-row\s*\{[^}]*min-height:74px/);
+  });
 });
 
 describe("App", () => {
@@ -105,6 +124,8 @@ describe("App", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
     const toggle = await screen.findByRole("button", { name: "展开标签筛选" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
@@ -128,8 +149,9 @@ describe("App", () => {
 
   it("shows import totals returned by the backend", async () => {
     render(<App />);
-    await screen.findByText("还没有条目。点击“导入”开始。");
-    fireEvent.click(screen.getByRole("button", { name: "导入" }));
+    await screen.findByText("还没有记录。");
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "批量导入" }));
     fireEvent.change(screen.getByRole("textbox", { name: "导入文本" }), { target: { value: "JM123, 456" } });
     fireEvent.click(within(screen.getByRole("form", { name: "导入编号" })).getByRole("button", { name: "导入" }));
     expect(await screen.findByText("新增 2 · 重复 1 · 无效 3")).toBeInTheDocument();
@@ -138,11 +160,15 @@ describe("App", () => {
   it("keeps single refresh, export, details, and theme persistence available", async () => {
     const fetchMock = installApiMock({ items: [comicFixture()], total: 1, page: 1, page_size: 50 });
     render(<App />);
-    expect(await screen.findByRole("link", { name: "导出" })).toHaveAttribute("href", "/api/export/ids");
     fireEvent.click(await screen.findByRole("button", { name: "刷新 JM123" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/comics/123/refresh", expect.objectContaining({ method: "POST" })));
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
     fireEvent.click(await screen.findByRole("button", { name: "示例标题" }));
     expect(await screen.findByRole("complementary", { name: "漫画详情" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("link", { name: "导出编号" })).toHaveAttribute("href", "/api/export/ids");
     fireEvent.click(screen.getByRole("button", { name: "切换主题" }));
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(localStorage.getItem("favlist-theme")).toBe("dark");
@@ -164,6 +190,125 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("checkbox", { name: "选择 JM123" }));
     fireEvent.click(screen.getByRole("button", { name: "批量刷新" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/comics/bulk-refresh", expect.objectContaining({ method: "POST", body: JSON.stringify({ ids: [123] }) })));
+  });
+
+  it("records the digits hidden in a sentence without confirmation", async () => {
+    const confirmMock = vi.spyOn(window, "confirm");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return Response.json({ username: "admin" });
+      if (url.startsWith("/api/comics?")) return Response.json({ items: [], total: 0, page: 1, page_size: 50 });
+      if (url.endsWith("/api/tags")) return Response.json([]);
+      if (url.endsWith("/api/import")) return Response.json({ added: 1, duplicate: 0, invalid: 0 });
+      throw new Error(`Unexpected request: ${url} ${init?.method ?? "GET"}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    const input = await screen.findByRole("textbox", { name: "快速记录" });
+    fireEvent.change(input, { target: { value: "小明12天做了3本作业，错45道，用6支笔" } });
+    fireEvent.submit(screen.getByRole("form", { name: "快速记录" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("已记录");
+    expect(input).toHaveValue("");
+    const importCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/import"));
+    expect(importCall?.[1]).toEqual(expect.objectContaining({ method: "POST", body: JSON.stringify({ text: "123456" }) }));
+    expect(confirmMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects digit-free quick text without making an import request", async () => {
+    const fetchMock = installApiMock({ items: [], total: 0, page: 1, page_size: 50 });
+    render(<App />);
+    fireEvent.change(await screen.findByRole("textbox", { name: "快速记录" }), { target: { value: "只有中文一二三和全角１２３" } });
+    fireEvent.submit(screen.getByRole("form", { name: "快速记录" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("这句话里没有可记录的数字");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/import"))).toBe(false);
+  });
+
+  it("reports duplicate quick records and blocks a second request while busy", async () => {
+    let finishImport: ((response: Response) => void) | undefined;
+    const pendingImport = new Promise<Response>((resolve) => { finishImport = resolve; });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return Response.json({ username: "admin" });
+      if (url.startsWith("/api/comics?")) return Response.json({ items: [], total: 0, page: 1, page_size: 50 });
+      if (url.endsWith("/api/tags")) return Response.json([]);
+      if (url.endsWith("/api/import")) return pendingImport;
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    const form = await screen.findByRole("form", { name: "快速记录" });
+    fireEvent.change(screen.getByRole("textbox", { name: "快速记录" }), { target: { value: "1和23" } });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/import"))).toHaveLength(1);
+
+    finishImport?.(Response.json({ added: 0, duplicate: 1, invalid: 0 }));
+    expect(await screen.findByRole("status")).toHaveTextContent("已经记录过");
+    expect(screen.getByRole("textbox", { name: "快速记录" })).toHaveValue("");
+  });
+
+  it("keeps quick text available when the import request fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/auth/me")) return Response.json({ username: "admin" });
+      if (url.startsWith("/api/comics?")) return Response.json({ items: [], total: 0, page: 1, page_size: 50 });
+      if (url.endsWith("/api/tags")) return Response.json([]);
+      if (url.endsWith("/api/import")) return Response.json({ detail: "记录服务暂不可用" }, { status: 503 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    const input = await screen.findByRole("textbox", { name: "快速记录" });
+    fireEvent.change(input, { target: { value: "今天看12页，记住345" } });
+    fireEvent.submit(screen.getByRole("form", { name: "快速记录" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("记录服务暂不可用");
+    expect(input).toHaveValue("今天看12页，记住345");
+  });
+
+  it("starts concealed, reveals through More, and conceals again in the background", async () => {
+    installApiMock({ items: [comicFixture()], total: 1, page: 1, page_size: 50 });
+    render(<App />);
+
+    await screen.findByText("JM123");
+    expect(screen.queryByText("示例标题")).not.toBeInTheDocument();
+    expect(screen.queryByText("作者")).not.toBeInTheDocument();
+    expect(screen.queryByText("不喜欢")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看 JM123 详情" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    expect(await screen.findByText("示例标题")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "示例标题 封面" })).toHaveAttribute("src", "/api/comics/123/cover?v=2");
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "隐藏敏感内容" }));
+    expect(screen.queryByText("示例标题")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    expect(await screen.findByText("示例标题")).toBeInTheDocument();
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    fireEvent(document, new Event("visibilitychange"));
+    expect(screen.queryByText("示例标题")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(localStorage.getItem("favlist-sensitive-visible")).toBeNull();
+  });
+
+  it("conceals sensitive content on pagehide", async () => {
+    installApiMock({ items: [comicFixture()], total: 1, page: 1, page_size: 50 });
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    expect(await screen.findByText("示例标题")).toBeInTheDocument();
+    fireEvent(window, new Event("pagehide"));
+    expect(screen.queryByText("示例标题")).not.toBeInTheDocument();
   });
 });
 
