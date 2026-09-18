@@ -73,6 +73,13 @@ def test_protected_routes_reject_anonymous_requests(client: TestClient) -> None:
     assert client.get("/api/export/ids").status_code == 401
 
 
+def test_api_schema_and_documentation_are_not_public(client: TestClient) -> None:
+    """Keep internal route and schema names out of anonymous documentation pages."""
+    assert client.get("/docs").status_code == 404
+    assert client.get("/redoc").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+
 def test_unsafe_routes_require_non_simple_csrf_header(client: TestClient) -> None:
     """Reject cross-site form-compatible login and authenticated mutation requests."""
     login = client.post(

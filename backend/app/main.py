@@ -119,7 +119,14 @@ def create_app(
                 await queue.stop()
             await engine.dispose()
 
-    app = FastAPI(title="Favlist", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(
+        title="Favlist",
+        version="1.0.0",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     app.state.settings = configured_settings
     app.state.engine = engine
     app.state.session_factory = session_factory

@@ -1,14 +1,14 @@
 <!-- Documentation header: installation, configuration, deployment, security, and verification guide. -->
 # Favlist
 
-单用户、自托管的收藏清单：React 前端、FastAPI 后端和 SQLite 持久化。它只保存外部服务元数据及 WebP 封面，不下载条目正文。
+单用户、自托管的收藏清单：React 前端、FastAPI 后端和 SQLite 持久化。它保存条目元数据及 WebP 封面，方便私人整理和检索。
 
 > [!IMPORTANT]
-> Favlist 是私人收藏索引，不是下载器、阅读器或多用户服务。请只在你有权访问外部服务内容的网络环境中使用。
+> Favlist 是私人收藏索引，不是公开目录或多用户服务。
 
 ## 功能
 
-- 批量导入 `ID123`、纯数字编号或混合分隔文本，自动去重并异步补全元数据。
+- 批量导入数字编号或混合分隔文本，自动去重并异步补全元数据。
 - 首页快速记录可将一句话中的所有 ASCII 数字按顺序拼成一个编号并直接保存。
 - 按编号、标题、作者和标签搜索；支持多标签交集筛选、分页与多种排序。
 - 缓存并按需恢复 WebP 封面，展示作者、简介、页数、发布日期和互动统计。
@@ -25,6 +25,7 @@
 | Web | React、TypeScript、Vite；生产环境由 Nginx 提供静态文件和同源 `/api` 代理 |
 | API | FastAPI、SQLAlchemy asyncio、后台任务队列 |
 | 数据 | SQLite 数据库与本地 WebP 封面缓存 |
+| 整合 | 可替换的元数据适配器与封面缓存 |
 | 部署 | Docker Compose；可选 Caddy 自动 HTTPS |
 
 默认请求链路为：`浏览器 → web (Nginx) → api (FastAPI) → SQLite / 封面缓存`。启用 Caddy profile 后，Caddy 位于 `web` 前方负责公网 TLS。数据库和封面都存放在 `favlist-data` Docker 卷中。
@@ -33,7 +34,7 @@
 
 登录后，首页默认只显示编号和处理状态，不会创建封面图片请求，也不会把标题、作者或标签放入页面。需要浏览完整馆藏时，打开右上角“更多”，选择“显示敏感内容”；切换标签页、让浏览器进入后台、离开或刷新页面后会恢复隐私模式。
 
-“快速记录”适合从普通句子中保存一个约定编号。它只提取 ASCII 数字 `0-9`，并按出现顺序拼接：`小明12天做了3本作业，错了45道题，用掉6支笔` 会记录为 `ID123456`。中文数字和全角数字不会被提取；一次需要保存多个独立编号时，使用“更多”菜单中的“批量导入”。
+“快速记录”适合从普通句子中保存一个约定编号。它只提取 ASCII 数字 `0-9`，并按出现顺序拼接：`小明12天做了3本作业，错了45道题，用掉6支笔` 会记录为 `123456`。中文数字和全角数字不会被提取；一次需要保存多个独立编号时，使用“更多”菜单中的“批量导入”。
 
 ## 快速开始（Docker，推荐）
 
@@ -109,10 +110,13 @@ npm run dev
 
 ## 配置
 
+`.env` 只应留在本机。必填的安全配置是 `ADMIN_PASSWORD_HASH` 和 `SESSION_SECRET`；空值会使 API 拒绝启动。`config.yaml` 的 `disliked_tags` 和 `liked_tags` 是有序列表，顺序决定空间不足时的显示优先级。可用 `config.example.yaml` 作为写法参考。
 
 Docker 的同源部署应保持 `CORS_ALLOWED_ORIGINS` 为空；仅当前后端分开运行时填写精确 origin，不允许 `*`。Compose 使用固定内部网段，API 默认只信任固定的 `web` 代理地址 `172.30.55.10/32`。项目内 Nginx 只接受固定 `caddy` 地址和 `TRUSTED_EDGE_PROXY` 提供的客户端 IP，并在转发到 API 前覆写外部转发头。默认 `TRUSTED_EDGE_PROXY=172.30.55.1` 是宿主机在默认 Docker 网络内的网关地址。脱离 Compose 运行时，`TRUSTED_PROXY_CIDRS` 只填写确定受信任的直连反向代理地址；为空时不采信可伪造的转发 IP 头。
 
+`COVER_ALLOWED_HOSTS` 可以用逗号限定精确封面主机，也可用显式 `*.example.com` 允许其子域。每次跳转都会重新检查 HTTPS、主机白名单和全部 DNS 结果，并固定连接到已验证的公网 IP。默认下载上限为 8 MiB，总超时 20 秒、单次网络超时 5 秒、最多 3 次重定向；解码仅接受 JPEG/PNG/WebP 单帧图片，并限制像素数及长宽。详细参数见 `.env.example`。
 
+默认数据库 URL 指向 Docker 数据卷；仅在你明确了解 SQLAlchemy URL 时才修改 `DATABASE_URL`。
 
 常用环境变量：
 
@@ -170,6 +174,7 @@ server {
 
 ## 安全说明
 
+服务没有注册或多用户功能。会话使用签名、HttpOnly、SameSite=Lax Cookie，并由服务端保存可撤销状态；退出后已复制的 Cookie 也会失效。所有非 GET API 请求都要求 `X-Favlist-CSRF: 1`。登录失败按经受信代理解析后的直接客户端 IP 限流；数据、封面和导出接口都要求登录。请使用唯一管理员密码、随机会话密钥，并妥善保管 `.env` 和 Docker 数据卷备份。不要将 `.env` 或真实的 `config.yaml` 私密内容提交到版本库。
 
 ## 测试与验证
 
@@ -189,12 +194,12 @@ cd ..
 docker compose config
 ```
 
-启动后确认 `docker compose ps` 显示 `api` 和 `web` 正常运行。自动化测试不会调用真实外部服务，而是使用注入的模拟客户端。
+启动后确认 `docker compose ps` 显示 `api` 和 `web` 正常运行。自动化测试使用注入的模拟客户端，不访问外部服务。
 
 ## 项目结构
 
 ```text
-backend/app/       FastAPI、数据库、认证、外部服务客户端、任务与封面处理
+backend/app/       FastAPI、数据库、认证、元数据适配器、任务与封面处理
 backend/tests/     后端单元及 API 测试
 frontend/src/      React 界面、API 客户端与前端测试
 config.yaml        有序标签强调配置

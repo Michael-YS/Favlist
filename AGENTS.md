@@ -3,7 +3,7 @@
 
 ## Project
 
-Favlist is a single-user, self-hosted React/FastAPI/SQLite app for external service item metadata and cover tracking. It does not download content.
+Favlist is a single-user, self-hosted React/FastAPI/SQLite collection library for organizing item metadata and cover images.
 
 ## Run and verify
 
@@ -13,10 +13,11 @@ Favlist is a single-user, self-hosted React/FastAPI/SQLite app for external serv
 
 ## Layout and conventions
 
-- `backend/app/`: API, database, auth, external service client, jobs, and covers; `backend/tests/`: backend tests.
+- `backend/app/`: API, database, auth, metadata adapter, jobs, and covers; `backend/tests/`: backend tests.
 - `frontend/src/`: React UI and tests; root `config.yaml`: ordered tag emphasis; `docker-compose.yml`: deployment.
-- Every source file needs a concise documentation header; every function/method needs a useful docstring or JSDoc. Keep tests deterministic and mock the external service.
+- Every code file needs a concise documentation header; every function/method needs a useful docstring or JSDoc. Keep tests deterministic and mock external services.
 
 ## Security and current state
 
 - Preserve authentication on all data endpoints. Secrets are environment variables; `COOKIE_SECURE=true` is mandatory for public HTTPS.
+- Docker stores SQLite and covers in `favlist-data`; avoid schema or compose changes without updating README and tests.
