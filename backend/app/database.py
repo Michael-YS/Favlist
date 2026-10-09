@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, selectinload
 
@@ -36,9 +36,18 @@ async def get_session(
 
 
 async def initialize_database(engine: AsyncEngine) -> None:
-    """Create all core tables when they do not yet exist."""
+    """Create tables and idempotently upgrade SQLite personal-status columns."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        if engine.dialect.name == "sqlite":
+            columns = await connection.run_sync(
+                lambda sync: {column["name"] for column in inspect(sync).get_columns("comics")}
+            )
+            for field in ("is_read", "is_starred"):
+                if field not in columns:
+                    await connection.execute(text(
+                        f"ALTER TABLE comics ADD COLUMN {field} BOOLEAN NOT NULL DEFAULT 0"
+                    ))
 
 
 class ComicRepository:

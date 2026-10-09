@@ -171,3 +171,35 @@ def test_repository_persists_dto_tags_and_and_filter() -> None:
         await engine.dispose()
 
     asyncio.run(exercise())
+
+
+def test_personal_column_migration_preserves_partial_and_old_databases() -> None:
+    """Upgrade old/partial schemas twice and retain existing flags and metadata."""
+    from sqlalchemy import text
+    async def exercise() -> None:
+        """Exercise each partial schema plus a fresh database independently."""
+        for existing in (None, "is_read", "is_starred", "both", "fresh"):
+            engine = create_database_engine(Settings(database_url="sqlite+aiosqlite:///:memory:"))
+            try:
+                if existing != "fresh":
+                    async with engine.begin() as connection:
+                        columns = "id INTEGER PRIMARY KEY, title TEXT"
+                        if existing in ("is_read", "both"):
+                            columns += ", is_read BOOLEAN NOT NULL DEFAULT 1"
+                        if existing in ("is_starred", "both"):
+                            columns += ", is_starred BOOLEAN NOT NULL DEFAULT 1"
+                        await connection.execute(text(f"CREATE TABLE comics ({columns})"))
+                        await connection.execute(text("INSERT INTO comics (id, title) VALUES (9, 'Preserved')"))
+                await initialize_database(engine)
+                await initialize_database(engine)
+                async with engine.begin() as connection:
+                    if existing == "fresh":
+                        await connection.execute(text("INSERT INTO comics (id, cover_version, status, added_at) VALUES (9, 0, 'ready', CURRENT_TIMESTAMP)"))
+                    row = (await connection.execute(text("SELECT title, is_read, is_starred FROM comics WHERE id=9"))).one()
+                    assert row.is_read == int(existing in ("is_read", "both"))
+                    assert row.is_starred == int(existing in ("is_starred", "both"))
+                    if existing != "fresh":
+                        assert row.title == "Preserved"
+            finally:
+                await engine.dispose()
+    asyncio.run(exercise())

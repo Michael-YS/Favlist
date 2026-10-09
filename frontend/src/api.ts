@@ -40,6 +40,10 @@ export const api = {
   tags: () => request<Tag[]>("/api/tags"),
   /** Import a free-form block of identifiers. */
   importIds: (text: string) => request<ImportSummary>("/api/import", { method: "POST", body: JSON.stringify({ text }) }),
+  /** Persist an explicit reading state. */
+  setRead: (id: number, is_read: boolean) => request<Comic>(`/api/comics/${id}/read-status`, { method: "PATCH", body: JSON.stringify({ is_read }) }),
+  /** Persist an explicit star state. */
+  setStar: (id: number, is_starred: boolean) => request<Comic>(`/api/comics/${id}/star-status`, { method: "PATCH", body: JSON.stringify({ is_starred }) }),
   /** Queue one record for forced metadata refresh. */
   refresh: (id: number) => request<void>(`/api/comics/${id}/refresh`, { method: "POST" }),
   /** Queue multiple records for forced metadata refresh. */

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -32,6 +32,8 @@ class Comic(Base):
     __tablename__ = "comics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    is_starred: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     author: Mapped[str | None] = mapped_column(String(500), nullable=True)

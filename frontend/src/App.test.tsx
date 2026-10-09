@@ -9,7 +9,7 @@ import type { Comic, ComicPage } from "./types";
 
 /** Return a complete comic fixture that mirrors FastAPI's ComicRead response. */
 function comicFixture(overrides: Partial<Comic> = {}): Comic {
-  return { id: 123, title: "示例标题", description: "示例简介", author: "作者", page_count: 20, published_at: "2025-01-01", views: 10, likes: 2, comments: 1, status: "ready", error: null, tags: [{ name: "不喜欢", emphasis: "disliked" }, { name: "喜欢", emphasis: "liked" }, { name: "普通", emphasis: "normal" }], cover_version: 2, ...overrides };
+  return { is_read: false, is_starred: false, id: 123, title: "示例标题", description: "示例简介", author: "作者", page_count: 20, published_at: "2025-01-01", views: 10, likes: 2, comments: 1, status: "ready", error: null, tags: [{ name: "不喜欢", emphasis: "disliked" }, { name: "喜欢", emphasis: "liked" }, { name: "普通", emphasis: "normal" }], cover_version: 2, ...overrides };
 }
 
 /** Install a fetch mock serving one authenticated list and its supported actions. */
@@ -309,6 +309,125 @@ describe("App", () => {
     expect(await screen.findByText("示例标题")).toBeInTheDocument();
     fireEvent(window, new Event("pagehide"));
     expect(screen.queryByText("示例标题")).not.toBeInTheDocument();
+  });
+});
+
+/** Install a mutable API double that applies real reading filters and pagination. */
+function installPersonalMock(records: Comic[], fail = false, pause?: Promise<void>) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), "http://localhost");
+    if (url.pathname === "/api/auth/me") return Response.json({ username: "admin" });
+    if (url.pathname === "/api/tags") return Response.json([]);
+    if (url.pathname === "/api/comics") {
+      const filter = url.searchParams.get("is_read");
+      const matches = records.filter((comic) => filter === null || String(comic.is_read) === filter)
+        .sort((a, b) => Number(b.is_starred) - Number(a.is_starred) || b.id - a.id);
+      const page = Number(url.searchParams.get("page"));
+      return Response.json({ items: matches.slice((page - 1) * 50, page * 50), total: matches.length, page, page_size: 50 });
+    }
+    const id = Number(url.pathname.split("/")[3]);
+    const comic = records.find((item) => item.id === id);
+    if (init?.method === "PATCH") {
+      await pause;
+      if (fail) return Response.json({ detail: "保存失败" }, { status: 503 });
+      Object.assign(comic!, JSON.parse(String(init.body)));
+    }
+    return Response.json(comic);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("personal status and floating menu", () => {
+  it("defaults to unread, hides completed records, and supports undo and all", async () => {
+    const fetchMock = installPersonalMock([comicFixture()]);
+    render(<App />);
+    expect(await screen.findByRole("combobox", { name: "阅读状态" })).toHaveValue("false");
+    fireEvent.click(await screen.findByRole("button", { name: "已看完 JM123" }));
+    await waitFor(() => expect(screen.queryByText("JM123")).not.toBeInTheDocument());
+    fireEvent.change(screen.getByRole("combobox", { name: "阅读状态" }), { target: { value: "true" } });
+    fireEvent.click(await screen.findByRole("button", { name: "标为未看完 JM123" }));
+    await waitFor(() => expect(screen.queryByText("JM123")).not.toBeInTheDocument());
+    fireEvent.change(screen.getByRole("combobox", { name: "阅读状态" }), { target: { value: "all" } });
+    expect(await screen.findByText("JM123")).toBeInTheDocument();
+    const patches = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patches.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([{ is_read: true }, { is_read: false }]);
+    expect(new Headers(patches[0][1]?.headers).get("X-Favlist-CSRF")).toBe("1");
+  });
+
+  it("pins stars and restores normal ordering after unstar", async () => {
+    installPersonalMock([comicFixture({ id: 124 }), comicFixture()]);
+    render(<App />);
+    await screen.findByRole("button", { name: "标星 JM123" });
+    expect(screen.getAllByRole("article")[0]).toHaveAttribute("data-comic-id", "JM 124");
+    fireEvent.click(screen.getByRole("button", { name: "标星 JM123" }));
+    expect(await screen.findByRole("button", { name: "取消星标 JM123" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(screen.getAllByRole("article")[0]).toHaveAttribute("data-comic-id", "JM 123"));
+    fireEvent.click(screen.getByRole("button", { name: "取消星标 JM123" }));
+    await waitFor(() => expect(screen.getAllByRole("article")[0]).toHaveAttribute("data-comic-id", "JM 124"));
+  });
+
+  it("blocks repeat submissions and preserves flags on failure", async () => {
+    let finish!: () => void;
+    const pause = new Promise<void>((resolve) => { finish = resolve; });
+    const fetchMock = installPersonalMock([comicFixture()], true, pause);
+    render(<App />);
+    const star = await screen.findByRole("button", { name: "标星 JM123" });
+    fireEvent.click(star);
+    expect(star).toBeDisabled();
+    expect(screen.getByRole("button", { name: "已看完 JM123" })).toBeDisabled();
+    fireEvent.click(star);
+    finish();
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败");
+    expect(star).toHaveAttribute("aria-pressed", "false");
+    expect(star).not.toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
+  });
+
+  it("synchronizes drawer stars and closes a completed detail outside the filter", async () => {
+    installPersonalMock([comicFixture()]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    fireEvent.click(await screen.findByRole("button", { name: "示例标题" }));
+    const drawer = await screen.findByRole("complementary", { name: "漫画详情" });
+    fireEvent.click(within(drawer).getByRole("button", { name: "标星 JM123" }));
+    expect(await within(drawer).findByRole("button", { name: "取消星标 JM123" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(within(drawer).getByRole("button", { name: "已看完 JM123" })).not.toBeDisabled());
+    fireEvent.click(within(drawer).getByRole("button", { name: "已看完 JM123" }));
+    await waitFor(() => expect(screen.queryByRole("complementary")).not.toBeInTheDocument());
+  });
+
+  it("returns to the last valid page and resets pagination when changing filters", async () => {
+    installPersonalMock(Array.from({ length: 51 }, (_, index) => comicFixture({ id: index + 1 })));
+    render(<App />);
+    await screen.findByText("JM51");
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.click(await screen.findByRole("button", { name: "已看完 JM1" }));
+    await waitFor(() => expect(screen.getByText("第 1 页")).toBeInTheDocument());
+    expect(await screen.findByText("JM51")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "阅读状态" }), { target: { value: "true" } });
+    expect(await screen.findByRole("button", { name: "标为未看完 JM1" })).toBeInTheDocument();
+    expect(screen.getByText("第 1 页")).toBeInTheDocument();
+  });
+
+  it("combines theme with More, closes on Escape and outside click", async () => {
+    render(<App />);
+    const toggle = await screen.findByRole("button", { name: "更多操作" });
+    expect(screen.queryByRole("button", { name: "切换主题" })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    fireEvent.mouseDown(document.body);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "切换主题" }));
+    expect(localStorage.getItem("favlist-theme")).toBe("dark");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(styles).toMatch(/\.more \{ position:fixed; left:max/);
+    expect(styles).toMatch(/\.more-menu \{ position:absolute; bottom:calc/);
   });
 });
 

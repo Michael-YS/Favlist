@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.auth import get_current_user
 from app.dependencies import get_cover_store, get_db_session, get_task_queue
 from app.models import Comic, ComicStatus, ComicTag, Tag
-from app.schemas import BulkIdsRequest, ComicPage, ComicRead, DeleteComicsRequest
+from app.schemas import BulkIdsRequest, ComicPage, ComicRead, DeleteComicsRequest, ReadStatusRequest, StarStatusRequest
 from app.security import require_csrf_header
 from app.tagging import build_tag_reads, filter_comics_by_all_tags, tag_preferences_from_settings
 from app.config import Settings, get_settings
@@ -70,6 +70,7 @@ async def list_comics(
     tag: list[str] = Query(default=[]),
     tags: list[str] = Query(default=[]),
     sort: str = Query(default="added_desc"),
+    is_read: bool | None = Query(default=None),
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
     _: str = Depends(get_current_user),
@@ -77,6 +78,8 @@ async def list_comics(
     """Return a paginated list filtered by text and all requested tag names."""
     tag_filters = [*tag, *(name for value in tags for name in value.split(","))]
     statement = select(Comic)
+    if is_read is not None:
+        statement = statement.where(Comic.is_read == is_read)
     if search and search.strip():
         term = search.strip()
         pattern = f"%{term}%"
@@ -93,7 +96,7 @@ async def list_comics(
     total = await session.scalar(select(func.count()).select_from(statement.subquery()))
     statement = (
         statement.options(selectinload(Comic.tag_links).selectinload(ComicTag.tag))
-        .order_by(*_sort_expression(sort))
+        .order_by(desc(Comic.is_starred), *_sort_expression(sort))
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
@@ -115,6 +118,38 @@ async def get_comic(
 ) -> ComicRead:
     """Return the full cached metadata for one comic."""
     return _comic_read(await _get_comic_or_404(session, comic_id), settings)
+
+
+@router.patch("/{comic_id}/read-status", response_model=ComicRead)
+async def set_read_status(
+    comic_id: int,
+    payload: ReadStatusRequest,
+    session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    _: str = Depends(get_current_user),
+    _csrf: None = Depends(require_csrf_header),
+) -> ComicRead:
+    """Persist the administrator's reading state independently of upstream metadata."""
+    comic = await _get_comic_or_404(session, comic_id)
+    comic.is_read = payload.is_read
+    await session.commit()
+    return _comic_read(comic, settings)
+
+
+@router.patch("/{comic_id}/star-status", response_model=ComicRead)
+async def set_star_status(
+    comic_id: int,
+    payload: StarStatusRequest,
+    session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    _: str = Depends(get_current_user),
+    _csrf: None = Depends(require_csrf_header),
+) -> ComicRead:
+    """Persist a star so matching comics sort before unstarred records."""
+    comic = await _get_comic_or_404(session, comic_id)
+    comic.is_starred = payload.is_starred
+    await session.commit()
+    return _comic_read(comic, settings)
 
 
 @router.get("/{comic_id}/cover")

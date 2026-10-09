@@ -343,3 +343,77 @@ def test_session_persists_across_application_restart(tmp_path: Path) -> None:
     with TestClient(second_app) as second:
         second.cookies.set(settings.session_cookie_name, cookie)
         assert second.get("/api/auth/me").json() == {"username": "admin"}
+
+
+def _seed_personal_comics(client: TestClient) -> None:
+    """Insert deterministic ready records without scheduling upstream work."""
+    async def seed() -> None:
+        """Populate both personal states and stable title/identifier ordering."""
+        async with client.app.state.session_factory() as session:
+            session.add_all([
+                Comic(id=1, title="Alpha", status=ComicStatus.READY),
+                Comic(id=2, title="Beta", status=ComicStatus.READY, is_read=True),
+                Comic(id=3, title="Gamma", status=ComicStatus.READY, is_starred=True),
+            ])
+            await session.commit()
+    client.portal.call(seed)
+
+
+@pytest.mark.parametrize("field,route", [("is_read", "read-status"), ("is_starred", "star-status")])
+def test_personal_flags_security_validation_and_persistence(client: TestClient, field: str, route: str) -> None:
+    """Authenticate, validate, persist and idempotently undo either personal flag."""
+    path = f"/api/comics/1/{route}"
+    assert client.patch(path, json={field: True}, headers=_CSRF_HEADERS).status_code == 401
+    _login(client)
+    _seed_personal_comics(client)
+    assert client.patch(path, json={field: True}).status_code == 403
+    assert client.patch(path, json={field: "true"}, headers=_CSRF_HEADERS).status_code == 422
+    assert client.patch(path, json={}, headers=_CSRF_HEADERS).status_code == 422
+    assert client.patch(f"/api/comics/999/{route}", json={field: True}, headers=_CSRF_HEADERS).status_code == 404
+    for target in (True, True, False):
+        response = client.patch(path, json={field: target}, headers=_CSRF_HEADERS)
+        assert response.status_code == 200
+        assert response.json()[field] is target
+        assert client.get("/api/comics/1").json()[field] is target
+
+
+@pytest.mark.parametrize("sort,normal_ids", [
+    ("added_desc", [2, 1]), ("title_asc", [1, 2]), ("id_asc", [1, 2]), ("id_desc", [2, 1]),
+])
+def test_star_ordering_precedes_pagination_and_read_filters(client: TestClient, sort: str, normal_ids: list[int]) -> None:
+    """Pin stars across page boundaries while retaining each group's chosen ordering."""
+    _login(client)
+    _seed_personal_comics(client)
+    pages = [client.get("/api/comics", params={"sort": sort, "page_size": 1, "page": page}).json() for page in (1, 2, 3)]
+    assert [page["items"][0]["id"] for page in pages] == [3, *normal_ids]
+    assert all(page["total"] == 3 for page in pages)
+    unread = client.get("/api/comics", params={"sort": sort, "is_read": "false"}).json()
+    assert unread["total"] == 2
+    assert [row["id"] for row in unread["items"]] == [3, 1]
+    client.patch("/api/comics/2/star-status", json={"is_starred": True}, headers=_CSRF_HEADERS)
+    read = client.get("/api/comics", params={"is_read": "true"}).json()
+    assert read["total"] == 1 and read["items"][0]["id"] == 2
+    assert [row["id"] for row in client.get("/api/comics", params={"is_read": "false"}).json()["items"]] == [3, 1]
+    client.patch("/api/comics/1/star-status", json={"is_starred": True}, headers=_CSRF_HEADERS)
+    starred_ids = [1, 3] if sort in ("title_asc", "id_asc") else [3, 1]
+    assert [row["id"] for row in client.get("/api/comics", params={"sort": sort, "is_read": "false"}).json()["items"]] == starred_ids
+    assert client.get("/api/export/ids").text == "JM1\nJM2\nJM3\n"
+
+
+def test_metadata_refresh_preserves_personal_flags(client: TestClient) -> None:
+    """Worker metadata/status writes must not erase personal reading or star flags."""
+    from app.database import ComicRepository
+    _login(client)
+    _seed_personal_comics(client)
+    for route, field in (("read-status", "is_read"), ("star-status", "is_starred")):
+        client.patch(f"/api/comics/1/{route}", json={field: True}, headers=_CSRF_HEADERS)
+    async def refresh() -> None:
+        """Exercise the worker repository against the same persisted record."""
+        async with client.app.state.session_factory() as session:
+            repository = ComicRepository(session)
+            await repository.set_status(1, "refreshing")
+            await repository.save_metadata(1, {"title": "Updated", "tags": []})
+    client.portal.call(refresh)
+    record = client.get("/api/comics/1").json()
+    assert record["title"] == "Updated"
+    assert record["is_read"] is True and record["is_starred"] is True

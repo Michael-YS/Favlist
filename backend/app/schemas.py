@@ -36,6 +36,8 @@ class ComicRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    is_read: bool = False
+    is_starred: bool = False
     title: str | None
     description: str | None = None
     author: str | None
@@ -51,6 +53,18 @@ class ComicRead(BaseModel):
     cover_version: int
     added_at: datetime | None = None
     refreshed_at: datetime | None = None
+
+
+class ReadStatusRequest(BaseModel):
+    """Set an explicit personal reading state without toggling on retries."""
+
+    is_read: bool = Field(strict=True)
+
+
+class StarStatusRequest(BaseModel):
+    """Set an explicit personal star state without toggling on retries."""
+
+    is_starred: bool = Field(strict=True)
 
 
 class ComicPage(BaseModel):

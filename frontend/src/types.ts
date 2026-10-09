@@ -7,6 +7,7 @@ export interface Tag { name: string; emphasis: Emphasis; count?: number; display
 
 /** Comic metadata returned in a list row or detail response. */
 export interface Comic {
+  is_read: boolean; is_starred: boolean;
   id: number; title: string | null; description?: string | null; author: string | null; page_count?: number | null;
   published_at?: string | null; views?: number | null; likes?: number | null; comments?: number | null;
   status: ComicStatus; error: string | null; tags: Tag[]; cover_version: number; added_at?: string; refreshed_at?: string | null;

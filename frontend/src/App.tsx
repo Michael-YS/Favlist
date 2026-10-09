@@ -23,10 +23,16 @@ interface ComicRowProps {
   onSelect: (id: number) => void;
   onOpen: (id: number) => void;
   onRefresh: (id: number) => void;
+  busy: boolean;
+  onRead: (comic: Comic) => void;
+  onStar: (comic: Comic) => void;
 }
 
 interface DetailDrawerProps {
   comic: Comic;
+  busy: boolean;
+  onRead: (comic: Comic) => void;
+  onStar: (comic: Comic) => void;
   onClose: () => void;
 }
 
@@ -37,6 +43,7 @@ interface ImportDialogProps {
 
 interface LibraryProps {
   onLogout: () => void;
+  onToggleTheme: () => void;
 }
 
 /** Return the saved theme, or the current operating-system colour preference. */
@@ -109,8 +116,16 @@ function Login({ onLogin }: LoginProps) {
   );
 }
 
+/** Render personal status controls shared by list rows and details. */
+function ComicActions({ comic, busy, onRead, onStar }: Pick<ComicRowProps, "comic" | "busy" | "onRead" | "onStar">) {
+  return <div className="personal-actions">
+    <button className="secondary star-button" disabled={busy} aria-label={`${comic.is_starred ? "取消星标" : "标星"} JM${comic.id}`} aria-pressed={comic.is_starred} onClick={() => onStar(comic)}>{comic.is_starred ? "★" : "☆"}</button>
+    <button className="secondary read-button" disabled={busy} aria-label={`${comic.is_read ? "标为未看完" : "已看完"} JM${comic.id}`} onClick={() => onRead(comic)}>{comic.is_read ? "标为未看完" : "已看完"}</button>
+  </div>;
+}
+
 /** Render one responsive horizontal comic row. */
-function ComicRow({ comic, sensitiveVisible, selected, onSelect, onOpen, onRefresh }: ComicRowProps) {
+function ComicRow({ comic, sensitiveVisible, selected, onSelect, onOpen, onRefresh, busy, onRead, onStar }: ComicRowProps) {
   const title = comic.title || "等待获取标题";
   return (
     <article className={`comic-row ${sensitiveVisible ? "" : "private-row"}`} data-comic-id={`JM ${comic.id}`}>
@@ -125,13 +140,14 @@ function ComicRow({ comic, sensitiveVisible, selected, onSelect, onOpen, onRefre
       {sensitiveVisible && <span className="author">{comic.author || "—"}</span>}
       {sensitiveVisible && <TagPills tags={comic.tags} />}
       <span className={`status ${comic.status}`} title={sensitiveVisible ? comic.error ?? undefined : undefined}>{comic.status}</span>
+      <ComicActions comic={comic} busy={busy} onRead={onRead} onStar={onStar} />
       <button className="icon-button" onClick={() => onRefresh(comic.id)} aria-label={`刷新 JM${comic.id}`}>↻</button>
     </article>
   );
 }
 
 /** Render the full metadata drawer for the selected comic. */
-function DetailDrawer({ comic, onClose }: DetailDrawerProps) {
+function DetailDrawer({ comic, onClose, busy, onRead, onStar }: DetailDrawerProps) {
   return (
     <div className="backdrop" onMouseDown={onClose} role="presentation">
       <aside className="drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="漫画详情">
@@ -139,6 +155,7 @@ function DetailDrawer({ comic, onClose }: DetailDrawerProps) {
         <img className="detail-cover" src={coverUrl(comic)} alt={`${comic.title || `JM${comic.id}`} 大封面`} />
         <h2>{comic.title || `JM${comic.id}`}</h2>
         <p className="muted">JM{comic.id} · {comic.author || "未知作者"}</p>
+        <ComicActions comic={comic} busy={busy} onRead={onRead} onStar={onStar} />
         <TagPills tags={comic.tags} all />
         {comic.description && <p>{comic.description}</p>}
         <dl>
@@ -189,11 +206,15 @@ function ImportDialog({ onClose, onImported }: ImportDialogProps) {
 }
 
 /** Render the authenticated library and coordinate its server-backed state. */
-function Library({ onLogout }: LibraryProps) {
+function Library({ onLogout, onToggleTheme }: LibraryProps) {
   const [items, setItems] = useState<Comic[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [readFilter, setReadFilter] = useState("false");
+  const [busyIds, setBusyIds] = useState<number[]>([]);
+  const mutationIds = useRef(new Set<number>());
+  const requestVersion = useRef(0);
   const [sort, setSort] = useState("added_desc");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
@@ -214,29 +235,40 @@ function Library({ onLogout }: LibraryProps) {
   /** Derive the server query from the current pagination and filter controls. */
   const query = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), page_size: "50", sort });
+    if (readFilter !== "all") params.set("is_read", readFilter);
     if (search.trim()) params.set("search", search.trim());
     selectedTags.forEach((tag) => params.append("tag", tag));
     return params;
-  }, [page, search, sort, selectedTags]);
+  }, [page, search, sort, selectedTags, readFilter]);
 
   /** Fetch the visible page and reset selection which no longer belongs to it. */
   const load = useCallback(async (): Promise<void> => {
+    const version = ++requestVersion.current;
     setLoading(true);
     try {
       const result = await api.comics(query);
+      if (version !== requestVersion.current) return;
+      const lastPage = Math.max(1, Math.ceil(result.total / 50));
+      if (page > lastPage) { setPage(lastPage); return; }
       setItems(result.items);
       setTotal(result.total);
       setSelected((current) => current.filter((id) => result.items.some((comic) => comic.id === id)));
       setError("");
     } catch (reason) {
-      setError(errorMessage(reason, "列表加载失败，请稍后重试。"));
+      if (version === requestVersion.current) setError(errorMessage(reason, "列表加载失败，请稍后重试。"));
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [query]);
+  }, [query, page]);
+
+  const latestLoad = useRef(load);
+  latestLoad.current = load;
 
   /** Load server state when any list control changes. */
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestVersion.current += 1; };
+  }, [load]);
 
   /** Restore the non-sensitive default and discard controls that can expose metadata. */
   const concealSensitive = useCallback((): void => {
@@ -268,7 +300,10 @@ function Library({ onLogout }: LibraryProps) {
       if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        menuRef.current?.querySelector<HTMLButtonElement>(".more-toggle")?.focus();
+      }
     };
     document.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -303,7 +338,27 @@ function Library({ onLogout }: LibraryProps) {
 
   /** Fetch one full record and open its metadata drawer. */
   async function openDetail(id: number): Promise<void> {
+    setMenuOpen(false);
     try { setDetail(await api.comic(id)); } catch (reason) { setError(errorMessage(reason, "详情加载失败，请稍后重试。")); }
+  }
+
+  /** Save a personal flag, synchronize details, and reload the server ordering. */
+  async function updatePersonalStatus(comic: Comic, field: "is_read" | "is_starred"): Promise<void> {
+    if (mutationIds.current.has(comic.id)) return;
+    mutationIds.current.add(comic.id);
+    setBusyIds([...mutationIds.current]);
+    try {
+      const updated = field === "is_read" ? await api.setRead(comic.id, !comic.is_read) : await api.setStar(comic.id, !comic.is_starred);
+      setItems((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setDetail((current) => current?.id === updated.id
+        ? (readFilter !== "all" && String(updated.is_read) !== readFilter ? null : updated) : current);
+      await latestLoad.current();
+    } catch (reason) {
+      setError(errorMessage(reason, "状态保存失败，请稍后重试。"));
+    } finally {
+      mutationIds.current.delete(comic.id);
+      setBusyIds([...mutationIds.current]);
+    }
   }
 
   /** Queue a forced refresh for one record and refresh its displayed state. */
@@ -361,17 +416,18 @@ function Library({ onLogout }: LibraryProps) {
 
   return (
     <main className="app-shell">
-      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div><div className="more" ref={menuRef}><button className="more-toggle secondary" aria-label="更多操作" aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen((current) => !current)}>•••</button>{menuOpen && <nav className="more-menu panel" id="more-menu" aria-label="更多操作菜单"><button onClick={() => { if (sensitiveVisible) concealSensitive(); else { setSensitiveVisible(true); setMenuOpen(false); } }}>{sensitiveVisible ? "隐藏敏感内容" : "显示敏感内容"}</button><button className="secondary" onClick={() => { setShowImport(true); setMenuOpen(false); }}>批量导入</button><a className="button-link secondary" href="/api/export/ids" onClick={() => setMenuOpen(false)}>导出编号</a><button className="secondary" onClick={() => { setMenuOpen(false); void logout(); }}>退出</button></nav>}</div></header>
+      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div></header><div className="more" ref={menuRef}><button className="more-toggle secondary" aria-label="更多操作" aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen((current) => !current)}>•••</button>{menuOpen && <nav className="more-menu panel" id="more-menu" aria-label="更多操作菜单"><button onClick={() => { if (sensitiveVisible) concealSensitive(); else { setSensitiveVisible(true); setMenuOpen(false); } }}>{sensitiveVisible ? "隐藏敏感内容" : "显示敏感内容"}</button><button className="secondary" onClick={() => { setShowImport(true); setMenuOpen(false); }}>批量导入</button><a className="button-link secondary" href="/api/export/ids" onClick={() => setMenuOpen(false)}>导出编号</a><button className="secondary" aria-label="切换主题" onClick={() => { onToggleTheme(); setMenuOpen(false); }}>切换主题</button><button className="secondary" onClick={() => { setMenuOpen(false); void logout(); }}>退出</button></nav>}</div>
       <form className="quick-record panel" onSubmit={submitQuickRecord} aria-label="快速记录"><label htmlFor="quick-record-input"><span>快速记录</span><small>句子里的数字会按顺序合并</small></label><div><input id="quick-record-input" aria-label="快速记录" autoComplete="off" enterKeyHint="done" spellCheck={false} placeholder="粘贴一句话" value={quickText} onChange={(event) => { setQuickText(event.target.value); setQuickFeedback(""); setQuickError(""); }} /><button disabled={quickBusy}>{quickBusy ? "记录中…" : "记录"}</button></div>{quickFeedback && <p className="quick-feedback" role="status">{quickFeedback}</p>}{quickError && <p className="error" role="alert">{quickError}</p>}</form>
+      <label className="reading-filter">阅读状态<select aria-label="阅读状态" value={readFilter} onChange={(event) => { setPage(1); setReadFilter(event.target.value); }}><option value="false">未看完</option><option value="true">已看完</option><option value="all">全部</option></select></label>
       {sensitiveVisible && <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>}
       {sensitiveVisible && tags.length > 0 && <section className={`facet-bar ${facetsExpanded ? "expanded" : ""}`} aria-label="标签筛选"><span className="facet-label">标签索引</span><button type="button" className="facet-toggle" aria-expanded={facetsExpanded} aria-controls="facet-list" aria-label={facetsExpanded ? "收起标签筛选" : "展开标签筛选"} onClick={() => setFacetsExpanded((current) => !current)}><span aria-hidden="true">⌄</span></button><div id="facet-list">{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
       {selected.length > 0 && <section className="bulk panel"><strong>已选 {selected.length} 条</strong><button onClick={() => void refreshSelected()}>批量刷新</button><button className="danger" onClick={() => void deleteSelected()}>删除</button></section>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="catalogue-heading"><h2>{sensitiveVisible ? "馆藏目录" : "记录目录"}</h2><p>{sensitiveVisible ? "封面与编号共同构成检索入口" : "隐私模式 · 仅显示编号与状态"}</p></div>
-      <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理记录…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} sensitiveVisible={sensitiveVisible} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有记录。</strong><span>在上方粘贴一句话，或从“更多”中批量导入。</span></div>}</section>
+      <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理记录…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} sensitiveVisible={sensitiveVisible} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} busy={busyIds.includes(comic.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有记录。</strong><span>在上方粘贴一句话，或从“更多”中批量导入。</span></div>}</section>
       <footer className="pager"><button disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>上一页</button><span>第 {page} 页</span><button disabled={page * 50 >= total || loading} onClick={() => setPage((current) => current + 1)}>下一页</button></footer>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={() => void load()} />}
-      {sensitiveVisible && detail && <DetailDrawer comic={detail} onClose={() => setDetail(null)} />}
+      {sensitiveVisible && detail && <DetailDrawer comic={detail} busy={busyIds.includes(detail.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} onClose={() => setDetail(null)} />}
     </main>
   );
 }
@@ -394,7 +450,7 @@ export function App() {
   function toggleTheme(): void { setTheme((current) => current === "dark" ? "light" : "dark"); }
 
   if (authenticated === null) return <main className="loading">加载中…</main>;
-  return <><button className="theme-toggle" aria-label="切换主题" onClick={toggleTheme}>{theme === "dark" ? "☀" : "☾"}</button>{authenticated ? <Library onLogout={() => setAuthenticated(false)} /> : <Login onLogin={() => setAuthenticated(true)} />}</>;
+  return <>{!authenticated && <button className="theme-toggle" aria-label="切换主题" onClick={toggleTheme}>{theme === "dark" ? "☀" : "☾"}</button>}{authenticated ? <Library onToggleTheme={toggleTheme} onLogout={() => setAuthenticated(false)} /> : <Login onLogin={() => setAuthenticated(true)} />}</>;
 }
 
 export { extractQuickRecordId, visibleTags };
