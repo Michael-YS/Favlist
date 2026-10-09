@@ -1,5 +1,5 @@
 /** Component tests for imports, details, bulk actions, tag folding, and themes. */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, extractQuickRecordId } from "./App";
 import { api } from "./api";
@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 
 /** Restore spies and mocked browser APIs after each test. */
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("visibleTags", () => {
   it("keeps server priority while folding six desktop tags and two mobile tags", () => {
@@ -309,6 +309,162 @@ describe("App", () => {
     expect(await screen.findByText("示例标题")).toBeInTheDocument();
     fireEvent(window, new Event("pagehide"));
     expect(screen.queryByText("示例标题")).not.toBeInTheDocument();
+  });
+});
+
+describe("sensitive content deadlines", () => {
+  /** Reveal a fully loaded detail before faking timers, preserving real async fetches. */
+  async function revealDetail() {
+    installApiMock({ items: [comicFixture()], total: 1, page: 1, page_size: 50 });
+    const view = render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "搜索" }), { target: { value: "示例" } });
+    fireEvent.click(await screen.findByRole("button", { name: "查看 JM123 详情" }));
+    await screen.findByRole("link", { name: "打开 JM 页面" });
+    vi.useFakeTimers();
+    // Reset the deadline onto the fake clock after all network-driven renders finish.
+    fireEvent.click(screen.getByRole("heading", { name: "Favlist" }));
+    return view;
+  }
+
+  /** Advance scheduled callbacks inside React's update boundary. */
+  function advance(milliseconds: number): void {
+    act(() => { vi.advanceTimersByTime(milliseconds); });
+  }
+
+  /** Dispatch a real visibility transition using the controlled document state. */
+  function visibility(state: "hidden" | "visible"): void {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: state });
+    fireEvent(document, new Event("visibilitychange"));
+  }
+
+  /** Arm one reading departure through the actual external link. */
+  function departReading(): void {
+    fireEvent.click(screen.getByRole("link", { name: "打开 JM 页面" }));
+    visibility("hidden");
+  }
+
+  it("conceals at one minute without interaction and clears sensitive controls", async () => {
+    await revealDetail();
+    advance(59_999);
+    expect(screen.getByRole("textbox", { name: "搜索" })).toHaveValue("示例");
+    advance(1);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "漫画详情" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    expect(screen.getByRole("textbox", { name: "搜索" })).toHaveValue("");
+  });
+
+  it.each(["click", "touchstart", "keydown", "input", "scroll"])("renews inactivity on %s", async (event) => {
+    await revealDetail();
+    advance(50_000);
+    fireEvent(screen.getByRole("textbox", { name: "搜索" }), new Event(event, { bubbles: true }));
+    advance(59_999);
+    expect(screen.getByRole("textbox", { name: "搜索" })).toBeInTheDocument();
+    advance(1);
+    expect(screen.queryByRole("textbox", { name: "搜索" })).not.toBeInTheDocument();
+  });
+
+  it("does not renew inactivity on mouse movement", async () => {
+    await revealDetail();
+    advance(50_000);
+    fireEvent.mouseMove(document);
+    advance(10_000);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("conceals immediately on an ordinary departure", async () => {
+    await revealDetail();
+    visibility("hidden");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("preserves reading state on return and restores the one-minute deadline", async () => {
+    await revealDetail();
+    departReading();
+    advance(29 * 60_000);
+    visibility("visible");
+    expect(screen.getByRole("textbox", { name: "搜索" })).toHaveValue("示例");
+    expect(screen.getByRole("complementary", { name: "漫画详情" })).toBeInTheDocument();
+    advance(59_999);
+    expect(screen.getByRole("link", { name: "打开 JM 页面" })).toBeInTheDocument();
+    advance(1);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("consumes reading permission so the next ordinary departure conceals", async () => {
+    await revealDetail();
+    departReading();
+    advance(1_000);
+    visibility("visible");
+    visibility("hidden");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("expires unused reading permission after five seconds", async () => {
+    await revealDetail();
+    fireEvent.click(screen.getByRole("link", { name: "打开 JM 页面" }));
+    advance(5_000);
+    visibility("hidden");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("conceals at thirty minutes without extending on repeated hidden events", async () => {
+    await revealDetail();
+    departReading();
+    advance(29 * 60_000);
+    visibility("hidden");
+    advance(59_999);
+    expect(screen.getByRole("link", { name: "打开 JM 页面" })).toBeInTheDocument();
+    advance(1);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    visibility("visible");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it.each([60_000, 30 * 60_000])("checks wall-clock expiry after suspended timers (%s ms)", async (elapsed) => {
+    await revealDetail();
+    if (elapsed > 60_000) departReading();
+    // Move wall time without executing timers, as with a suspended browser.
+    vi.setSystemTime(Date.now() + elapsed);
+    visibility("visible");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("does not let a late interaction revive an expired foreground deadline", async () => {
+    await revealDetail();
+    vi.setSystemTime(Date.now() + 60_000);
+    fireEvent.click(screen.getByRole("heading", { name: "Favlist" }));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("clears reading permission on manual concealment", async () => {
+    await revealDetail();
+    fireEvent.click(screen.getByRole("link", { name: "打开 JM 页面" }));
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "隐藏敏感内容" }));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
+    visibility("hidden");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("conceals on pagehide even during reading and cleans timers on unmount", async () => {
+    const view = await revealDetail();
+    departReading();
+    fireEvent(window, new Event("pagehide"));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+    visibility("visible");
+    render(<App />);
+    await screen.findByText("JM123");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(localStorage.getItem("favlist-sensitive-visible")).toBeNull();
   });
 });
 

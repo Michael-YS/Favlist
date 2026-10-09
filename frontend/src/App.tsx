@@ -34,6 +34,7 @@ interface DetailDrawerProps {
   onRead: (comic: Comic) => void;
   onStar: (comic: Comic) => void;
   onClose: () => void;
+  onOpenReading: () => void;
 }
 
 interface ImportDialogProps {
@@ -147,7 +148,7 @@ function ComicRow({ comic, sensitiveVisible, selected, onSelect, onOpen, onRefre
 }
 
 /** Render the full metadata drawer for the selected comic. */
-function DetailDrawer({ comic, onClose, busy, onRead, onStar }: DetailDrawerProps) {
+function DetailDrawer({ comic, onClose, busy, onRead, onStar, onOpenReading }: DetailDrawerProps) {
   return (
     <div className="backdrop" onMouseDown={onClose} role="presentation">
       <aside className="drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="漫画详情">
@@ -164,7 +165,7 @@ function DetailDrawer({ comic, onClose, busy, onRead, onStar }: DetailDrawerProp
           <dt>观看 / 喜欢 / 评论</dt><dd>{comic.views ?? 0} / {comic.likes ?? 0} / {comic.comments ?? 0}</dd>
           {comic.error && <><dt>最近错误</dt><dd className="error">{comic.error}</dd></>}
         </dl>
-        <a className="button-link" href={`https://18comic.vip/album/${comic.id}`} target="_blank" rel="noreferrer">打开 JM 页面</a>
+        <a className="button-link" href={`https://18comic.vip/album/${comic.id}`} target="_blank" rel="noreferrer" onClick={onOpenReading}>打开 JM 页面</a>
       </aside>
     </div>
   );
@@ -231,6 +232,7 @@ function Library({ onLogout, onToggleTheme }: LibraryProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const menuRef = useRef<HTMLDivElement>(null);
+  const readingIntentUntil = useRef(0);
 
   /** Derive the server query from the current pagination and filter controls. */
   const query = useMemo(() => {
@@ -272,6 +274,7 @@ function Library({ onLogout, onToggleTheme }: LibraryProps) {
 
   /** Restore the non-sensitive default and discard controls that can expose metadata. */
   const concealSensitive = useCallback((): void => {
+    readingIntentUntil.current = 0;
     setSensitiveVisible(false);
     setMenuOpen(false);
     setDetail(null);
@@ -280,18 +283,68 @@ function Library({ onLogout, onToggleTheme }: LibraryProps) {
     setFacetsExpanded(false);
   }, []);
 
-  /** Conceal the catalogue whenever the browser leaves or backgrounds this page. */
+  /** Allow only the next imminent background transition to use the reading grace period. */
+  const openReading = useCallback((): void => {
+    readingIntentUntil.current = Date.now() + 5_000;
+  }, []);
+
+  /** Conceal after inactivity or ordinary backgrounding, allowing a bounded reading trip. */
   useEffect(() => {
-    const handleVisibility = (): void => {
-      if (document.visibilityState === "hidden") concealSensitive();
+    if (!sensitiveVisible) return;
+    let deadline = Date.now() + 60_000;
+    let backgrounded = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    /** Check wall-clock expiry even when the browser delays background timers. */
+    const checkExpiry = (): void => {
+      if (Date.now() >= deadline) concealSensitive();
+      else scheduleExpiry();
     };
+
+    /** Keep one timer scheduled for the current foreground or reading deadline. */
+    function scheduleExpiry(): void {
+      clearTimeout(timer);
+      timer = setTimeout(checkExpiry, Math.max(0, deadline - Date.now()));
+    }
+
+    /** Renew foreground inactivity only for user interactions before expiry. */
+    const handleActivity = (): void => {
+      if (document.visibilityState === "hidden") return;
+      if (Date.now() >= deadline) { concealSensitive(); return; }
+      deadline = Date.now() + 60_000;
+      scheduleExpiry();
+    };
+
+    /** Consume the reading intent once, and restore normal inactivity on return. */
+    const handleVisibility = (): void => {
+      if (document.visibilityState === "hidden") {
+        if (backgrounded) return;
+        backgrounded = true;
+        const reading = Date.now() < readingIntentUntil.current && Date.now() < deadline;
+        readingIntentUntil.current = 0;
+        if (!reading) { concealSensitive(); return; }
+        deadline = Date.now() + 30 * 60_000;
+        scheduleExpiry();
+      } else if (backgrounded) {
+        backgrounded = false;
+        if (Date.now() >= deadline) { concealSensitive(); return; }
+        deadline = Date.now() + 60_000;
+        scheduleExpiry();
+      } else checkExpiry();
+    };
+    const activityEvents = ["click", "touchstart", "keydown", "input", "scroll"] as const;
+    scheduleExpiry();
+    activityEvents.forEach((event) => document.addEventListener(event, handleActivity, true));
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", concealSensitive);
     return () => {
+      clearTimeout(timer);
+      readingIntentUntil.current = 0;
+      activityEvents.forEach((event) => document.removeEventListener(event, handleActivity, true));
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("pagehide", concealSensitive);
     };
-  }, [concealSensitive]);
+  }, [concealSensitive, sensitiveVisible]);
 
   /** Close the secondary menu after an outside click or Escape key press. */
   useEffect(() => {
@@ -427,7 +480,7 @@ function Library({ onLogout, onToggleTheme }: LibraryProps) {
       <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理记录…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} sensitiveVisible={sensitiveVisible} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} busy={busyIds.includes(comic.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有记录。</strong><span>在上方粘贴一句话，或从“更多”中批量导入。</span></div>}</section>
       <footer className="pager"><button disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>上一页</button><span>第 {page} 页</span><button disabled={page * 50 >= total || loading} onClick={() => setPage((current) => current + 1)}>下一页</button></footer>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={() => void load()} />}
-      {sensitiveVisible && detail && <DetailDrawer comic={detail} busy={busyIds.includes(detail.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} onClose={() => setDetail(null)} />}
+      {sensitiveVisible && detail && <DetailDrawer comic={detail} busy={busyIds.includes(detail.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} onClose={() => setDetail(null)} onOpenReading={openReading} />}
     </main>
   );
 }
