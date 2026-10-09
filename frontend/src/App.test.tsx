@@ -324,7 +324,7 @@ describe("sensitive content deadlines", () => {
     await screen.findByRole("link", { name: "打开 JM 页面" });
     vi.useFakeTimers();
     // Reset the deadline onto the fake clock after all network-driven renders finish.
-    fireEvent.click(screen.getByRole("heading", { name: "Favlist" }));
+    fireEvent.click(screen.getByRole("heading", { name: "示例标题" }));
     return view;
   }
 
@@ -348,21 +348,21 @@ describe("sensitive content deadlines", () => {
   it("conceals at one minute without interaction and clears sensitive controls", async () => {
     await revealDetail();
     advance(59_999);
-    expect(screen.getByRole("textbox", { name: "搜索" })).toHaveValue("示例");
+    expect(screen.getByRole("textbox", { name: "搜索", hidden: true })).toHaveValue("示例");
     advance(1);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "漫画详情" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     fireEvent.click(screen.getByRole("button", { name: "显示敏感内容" }));
-    expect(screen.getByRole("textbox", { name: "搜索" })).toHaveValue("");
+    expect(screen.getByRole("textbox", { name: "搜索", hidden: true })).toHaveValue("");
   });
 
   it.each(["click", "touchstart", "keydown", "input", "scroll"])("renews inactivity on %s", async (event) => {
     await revealDetail();
     advance(50_000);
-    fireEvent(screen.getByRole("textbox", { name: "搜索" }), new Event(event, { bubbles: true }));
+    fireEvent(screen.getByRole("heading", { name: "示例标题" }), new Event(event, { bubbles: true }));
     advance(59_999);
-    expect(screen.getByRole("textbox", { name: "搜索" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "搜索", hidden: true })).toBeInTheDocument();
     advance(1);
     expect(screen.queryByRole("textbox", { name: "搜索" })).not.toBeInTheDocument();
   });
@@ -386,7 +386,7 @@ describe("sensitive content deadlines", () => {
     departReading();
     advance(29 * 60_000);
     visibility("visible");
-    expect(screen.getByRole("textbox", { name: "搜索" })).toHaveValue("示例");
+    expect(screen.getByRole("textbox", { name: "搜索", hidden: true })).toHaveValue("示例");
     expect(screen.getByRole("complementary", { name: "漫画详情" })).toBeInTheDocument();
     advance(59_999);
     expect(screen.getByRole("link", { name: "打开 JM 页面" })).toBeInTheDocument();
@@ -436,13 +436,14 @@ describe("sensitive content deadlines", () => {
   it("does not let a late interaction revive an expired foreground deadline", async () => {
     await revealDetail();
     vi.setSystemTime(Date.now() + 60_000);
-    fireEvent.click(screen.getByRole("heading", { name: "Favlist" }));
+    fireEvent.click(screen.getByRole("heading", { name: "示例标题" }));
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
   it("clears reading permission on manual concealment", async () => {
     await revealDetail();
     fireEvent.click(screen.getByRole("link", { name: "打开 JM 页面" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭详情" }));
     fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     fireEvent.click(screen.getByRole("button", { name: "隐藏敏感内容" }));
     expect(screen.queryByRole("img")).not.toBeInTheDocument();

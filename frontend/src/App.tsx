@@ -5,6 +5,7 @@
  * presents the supplied data and coordinates requests made through `api`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Button, Checkbox, CssBaseline, Dialog, DialogContent, DialogTitle, Drawer, NativeSelect, Paper, StyledEngineProvider, TextField, ThemeProvider, createTheme } from "@mui/material";
 import { api } from "./api";
 import { TagPills } from "./components/TagPills";
 import { visibleTags } from "./lib/tags";
@@ -102,16 +103,10 @@ function Login({ onLogin }: LoginProps) {
         <p className="eyebrow">私人收藏档案</p>
         <h1>Favlist</h1>
         <p className="muted">登录以整理、检索和维护你的收藏。</p>
-        <label>
-          用户名
-          <input autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
-        </label>
-        <label>
-          密码
-          <input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </label>
+        <TextField label="用户名" autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} fullWidth />
+        <TextField label="密码" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} fullWidth />
         {error && <p className="error" role="alert">{error}</p>}
-        <button disabled={submitting || !username || !password}>{submitting ? "登录中…" : "登录"}</button>
+        <Button type="submit" disabled={submitting || !username || !password}>{submitting ? "登录中…" : "登录"}</Button>
       </form>
     </main>
   );
@@ -120,8 +115,8 @@ function Login({ onLogin }: LoginProps) {
 /** Render personal status controls shared by list rows and details. */
 function ComicActions({ comic, busy, onRead, onStar }: Pick<ComicRowProps, "comic" | "busy" | "onRead" | "onStar">) {
   return <div className="personal-actions">
-    <button className="secondary star-button" disabled={busy} aria-label={`${comic.is_starred ? "取消星标" : "标星"} JM${comic.id}`} aria-pressed={comic.is_starred} onClick={() => onStar(comic)}>{comic.is_starred ? "★" : "☆"}</button>
-    <button className="secondary read-button" disabled={busy} aria-label={`${comic.is_read ? "标为未看完" : "已看完"} JM${comic.id}`} onClick={() => onRead(comic)}>{comic.is_read ? "标为未看完" : "已看完"}</button>
+    <Button variant="outlined" className="secondary star-button" disabled={busy} aria-label={`${comic.is_starred ? "取消星标" : "标星"} JM${comic.id}`} aria-pressed={comic.is_starred} onClick={() => onStar(comic)}>{comic.is_starred ? "★" : "☆"}</Button>
+    <Button variant="outlined" className="secondary read-button" disabled={busy} aria-label={`${comic.is_read ? "标为未看完" : "已看完"} JM${comic.id}`} onClick={() => onRead(comic)}>{comic.is_read ? "标为未看完" : "已看完"}</Button>
   </div>;
 }
 
@@ -129,30 +124,29 @@ function ComicActions({ comic, busy, onRead, onStar }: Pick<ComicRowProps, "comi
 function ComicRow({ comic, sensitiveVisible, selected, onSelect, onOpen, onRefresh, busy, onRead, onStar }: ComicRowProps) {
   const title = comic.title || "等待获取标题";
   return (
-    <article className={`comic-row ${sensitiveVisible ? "" : "private-row"}`} data-comic-id={`JM ${comic.id}`}>
-      <input aria-label={`选择 JM${comic.id}`} type="checkbox" checked={selected} onChange={() => onSelect(comic.id)} />
-      {sensitiveVisible && <button className="cover-button" onClick={() => onOpen(comic.id)} aria-label={`查看 JM${comic.id} 详情`}>
+    <Paper component="article" variant="outlined" className={`comic-row ${sensitiveVisible ? "" : "private-row"}`} data-comic-id={`JM ${comic.id}`}>
+      <Checkbox className="row-checkbox" size="small" slotProps={{ input: { "aria-label": `选择 JM${comic.id}` } }} checked={selected} onChange={() => onSelect(comic.id)} />
+      {sensitiveVisible && <Button variant="text" className="cover-button" onClick={() => onOpen(comic.id)} aria-label={`查看 JM${comic.id} 详情`}>
         <img className="cover" src={coverUrl(comic)} alt={`${title} 封面`} />
-      </button>}
+      </Button>}
       <div className="identity">
         <strong>JM{comic.id}</strong>
-        {sensitiveVisible && <button className="title-link" onClick={() => onOpen(comic.id)}>{title}</button>}
+        {sensitiveVisible && <Button variant="text" className="title-link" onClick={() => onOpen(comic.id)}>{title}</Button>}
       </div>
       {sensitiveVisible && <span className="author">{comic.author || "—"}</span>}
       {sensitiveVisible && <TagPills tags={comic.tags} />}
       <span className={`status ${comic.status}`} title={sensitiveVisible ? comic.error ?? undefined : undefined}>{comic.status}</span>
       <ComicActions comic={comic} busy={busy} onRead={onRead} onStar={onStar} />
-      <button className="icon-button" onClick={() => onRefresh(comic.id)} aria-label={`刷新 JM${comic.id}`}>↻</button>
-    </article>
+      <Button variant="text" className="icon-button" onClick={() => onRefresh(comic.id)} aria-label={`刷新 JM${comic.id}`}>↻</Button>
+    </Paper>
   );
 }
 
 /** Render the full metadata drawer for the selected comic. */
 function DetailDrawer({ comic, onClose, busy, onRead, onStar, onOpenReading }: DetailDrawerProps) {
   return (
-    <div className="backdrop" onMouseDown={onClose} role="presentation">
-      <aside className="drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="漫画详情">
-        <button className="close" onClick={onClose} aria-label="关闭详情">×</button>
+    <Drawer open slotProps={{ paper: { "aria-label": "漫画详情" } }} anchor="right" onClose={onClose}><aside className="drawer" aria-label="漫画详情">
+        <Button variant="text" className="close" onClick={onClose} aria-label="关闭详情">×</Button>
         <img className="detail-cover" src={coverUrl(comic)} alt={`${comic.title || `JM${comic.id}`} 大封面`} />
         <h2>{comic.title || `JM${comic.id}`}</h2>
         <p className="muted">JM{comic.id} · {comic.author || "未知作者"}</p>
@@ -165,9 +159,9 @@ function DetailDrawer({ comic, onClose, busy, onRead, onStar, onOpenReading }: D
           <dt>观看 / 喜欢 / 评论</dt><dd>{comic.views ?? 0} / {comic.likes ?? 0} / {comic.comments ?? 0}</dd>
           {comic.error && <><dt>最近错误</dt><dd className="error">{comic.error}</dd></>}
         </dl>
-        <a className="button-link" href={`https://18comic.vip/album/${comic.id}`} target="_blank" rel="noreferrer" onClick={onOpenReading}>打开 JM 页面</a>
+        <Button component="a" href={`https://18comic.vip/album/${comic.id}`} target="_blank" rel="noreferrer" onClick={onOpenReading}>打开 JM 页面</Button>
       </aside>
-    </div>
+    </Drawer>
   );
 }
 
@@ -194,15 +188,15 @@ function ImportDialog({ onClose, onImported }: ImportDialogProps) {
   }
 
   return (
-    <div className="backdrop" role="presentation">
-      <form className="dialog panel" onSubmit={submit} aria-label="导入编号">
-        <h2>导入编号</h2>
-        <textarea aria-label="导入文本" autoFocus placeholder="JM123, 456 或每行一个编号" value={text} onChange={(event) => setText(event.target.value)} />
+    <Dialog open onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="import-title">
+      <DialogTitle id="import-title">导入编号</DialogTitle>
+      <DialogContent><form className="dialog" onSubmit={submit} aria-label="导入编号">
+        <TextField fullWidth multiline minRows={7} slotProps={{ htmlInput: { "aria-label": "导入文本" } }} autoFocus placeholder="JM123, 456 或每行一个编号" value={text} onChange={(event) => setText(event.target.value)} />
         {summary && <p className="summary">新增 {summary.added} · 重复 {summary.duplicate} · 无效 {summary.invalid}</p>}
         {error && <p className="error" role="alert">{error}</p>}
-        <footer><button type="button" className="secondary" onClick={onClose}>关闭</button><button disabled={busy || !text.trim()}>{busy ? "导入中…" : "导入"}</button></footer>
-      </form>
-    </div>
+        <footer><Button type="button" variant="outlined" className="secondary" onClick={onClose}>关闭</Button><Button type="submit" disabled={busy || !text.trim()}>{busy ? "导入中…" : "导入"}</Button></footer>
+      </form></DialogContent>
+    </Dialog>
   );
 }
 
@@ -469,16 +463,16 @@ function Library({ onLogout, onToggleTheme }: LibraryProps) {
 
   return (
     <main className="app-shell">
-      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div></header><div className="more" ref={menuRef}><button className="more-toggle secondary" aria-label="更多操作" aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen((current) => !current)}>•••</button>{menuOpen && <nav className="more-menu panel" id="more-menu" aria-label="更多操作菜单"><button onClick={() => { if (sensitiveVisible) concealSensitive(); else { setSensitiveVisible(true); setMenuOpen(false); } }}>{sensitiveVisible ? "隐藏敏感内容" : "显示敏感内容"}</button><button className="secondary" onClick={() => { setShowImport(true); setMenuOpen(false); }}>批量导入</button><a className="button-link secondary" href="/api/export/ids" onClick={() => setMenuOpen(false)}>导出编号</a><button className="secondary" aria-label="切换主题" onClick={() => { onToggleTheme(); setMenuOpen(false); }}>切换主题</button><button className="secondary" onClick={() => { setMenuOpen(false); void logout(); }}>退出</button></nav>}</div>
-      <form className="quick-record panel" onSubmit={submitQuickRecord} aria-label="快速记录"><label htmlFor="quick-record-input"><span>快速记录</span><small>句子里的数字会按顺序合并</small></label><div><input id="quick-record-input" aria-label="快速记录" autoComplete="off" enterKeyHint="done" spellCheck={false} placeholder="粘贴一句话" value={quickText} onChange={(event) => { setQuickText(event.target.value); setQuickFeedback(""); setQuickError(""); }} /><button disabled={quickBusy}>{quickBusy ? "记录中…" : "记录"}</button></div>{quickFeedback && <p className="quick-feedback" role="status">{quickFeedback}</p>}{quickError && <p className="error" role="alert">{quickError}</p>}</form>
-      <label className="reading-filter">阅读状态<select aria-label="阅读状态" value={readFilter} onChange={(event) => { setPage(1); setReadFilter(event.target.value); }}><option value="false">未看完</option><option value="true">已看完</option><option value="all">全部</option></select></label>
-      {sensitiveVisible && <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><input aria-label="搜索" placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><select aria-label="排序" value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></select></section>}
-      {sensitiveVisible && tags.length > 0 && <section className={`facet-bar ${facetsExpanded ? "expanded" : ""}`} aria-label="标签筛选"><span className="facet-label">标签索引</span><button type="button" className="facet-toggle" aria-expanded={facetsExpanded} aria-controls="facet-list" aria-label={facetsExpanded ? "收起标签筛选" : "展开标签筛选"} onClick={() => setFacetsExpanded((current) => !current)}><span aria-hidden="true">⌄</span></button><div id="facet-list">{tags.map((tag) => <button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</button>)}</div></section>}
-      {selected.length > 0 && <section className="bulk panel"><strong>已选 {selected.length} 条</strong><button onClick={() => void refreshSelected()}>批量刷新</button><button className="danger" onClick={() => void deleteSelected()}>删除</button></section>}
+      <header className="library-header"><div><p className="eyebrow">私人收藏档案</p><div className="title-line"><h1>Favlist</h1><span className="record-count">{total} records</span></div></div></header><div className="more" ref={menuRef}><Button className="more-toggle secondary" aria-label="更多操作" aria-expanded={menuOpen} aria-controls="more-menu" onClick={() => setMenuOpen((current) => !current)}>•••</Button>{menuOpen && <nav className="more-menu panel" id="more-menu" aria-label="更多操作菜单"><Button onClick={() => { if (sensitiveVisible) concealSensitive(); else { setSensitiveVisible(true); setMenuOpen(false); } }}>{sensitiveVisible ? "隐藏敏感内容" : "显示敏感内容"}</Button><Button variant="outlined" className="secondary" onClick={() => { setShowImport(true); setMenuOpen(false); }}>批量导入</Button><Button component="a" variant="outlined" href="/api/export/ids" onClick={() => setMenuOpen(false)}>导出编号</Button><Button variant="outlined" className="secondary" aria-label="切换主题" onClick={() => { onToggleTheme(); setMenuOpen(false); }}>切换主题</Button><Button variant="outlined" className="secondary" onClick={() => { setMenuOpen(false); void logout(); }}>退出</Button></nav>}</div>
+      <form className="quick-record panel" onSubmit={submitQuickRecord} aria-label="快速记录"><label htmlFor="quick-record-input"><span>快速记录</span><small>句子里的数字会按顺序合并</small></label><div><TextField fullWidth id="quick-record-input" slotProps={{ htmlInput: { "aria-label": "快速记录", enterKeyHint: "done", spellCheck: false } }} autoComplete="off" placeholder="粘贴一句话" value={quickText} onChange={(event) => { setQuickText(event.target.value); setQuickFeedback(""); setQuickError(""); }} /><Button type="submit" disabled={quickBusy}>{quickBusy ? "记录中…" : "记录"}</Button></div>{quickFeedback && <p className="quick-feedback" role="status">{quickFeedback}</p>}{quickError && <p className="error" role="alert">{quickError}</p>}</form>
+      <label className="reading-filter">阅读状态<NativeSelect inputProps={{ "aria-label": "阅读状态" }} value={readFilter} onChange={(event) => { setPage(1); setReadFilter(event.target.value); }}><option value="false">未看完</option><option value="true">已看完</option><option value="all">全部</option></NativeSelect></label>
+      {sensitiveVisible && <section className="toolbar"><div className="search-field"><span aria-hidden="true">⌕</span><TextField fullWidth slotProps={{ htmlInput: { "aria-label": "搜索" } }} placeholder="搜索编号、标题、作者或标签" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} /></div><NativeSelect inputProps={{ "aria-label": "排序" }} value={sort} onChange={(event) => { setPage(1); setSort(event.target.value); }}><option value="added_desc">最近添加</option><option value="title_asc">标题</option><option value="id_asc">编号升序</option><option value="id_desc">编号降序</option></NativeSelect></section>}
+      {sensitiveVisible && tags.length > 0 && <section className={`facet-bar ${facetsExpanded ? "expanded" : ""}`} aria-label="标签筛选"><span className="facet-label">标签索引</span><Button variant="text" type="button" className="facet-toggle" aria-expanded={facetsExpanded} aria-controls="facet-list" aria-label={facetsExpanded ? "收起标签筛选" : "展开标签筛选"} onClick={() => setFacetsExpanded((current) => !current)}><span aria-hidden="true">⌄</span></Button><div id="facet-list">{tags.map((tag) => <Button key={tag.name} className={`tag ${tag.emphasis} ${selectedTags.includes(tag.name) ? "active" : ""}`} onClick={() => toggleTag(tag.name)}>{tag.name} ({tag.count ?? 0})</Button>)}</div></section>}
+      {selected.length > 0 && <section className="bulk panel"><strong>已选 {selected.length} 条</strong><Button onClick={() => void refreshSelected()}>批量刷新</Button><Button color="error" className="danger" onClick={() => void deleteSelected()}>删除</Button></section>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="catalogue-heading"><h2>{sensitiveVisible ? "馆藏目录" : "记录目录"}</h2><p>{sensitiveVisible ? "封面与编号共同构成检索入口" : "隐私模式 · 仅显示编号与状态"}</p></div>
       <section className="list" aria-busy={loading}>{loading && items.length === 0 ? <div className="empty panel">正在整理记录…</div> : items.map((comic) => <ComicRow key={comic.id} comic={comic} sensitiveVisible={sensitiveVisible} selected={selected.includes(comic.id)} onSelect={toggleSelection} onOpen={(id) => void openDetail(id)} onRefresh={(id) => void refreshOne(id)} busy={busyIds.includes(comic.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} />)}{!loading && items.length === 0 && <div className="empty panel"><strong>还没有记录。</strong><span>在上方粘贴一句话，或从“更多”中批量导入。</span></div>}</section>
-      <footer className="pager"><button disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>上一页</button><span>第 {page} 页</span><button disabled={page * 50 >= total || loading} onClick={() => setPage((current) => current + 1)}>下一页</button></footer>
+      <footer className="pager"><Button disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>上一页</Button><span>第 {page} 页</span><Button disabled={page * 50 >= total || loading} onClick={() => setPage((current) => current + 1)}>下一页</Button></footer>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={() => void load()} />}
       {sensitiveVisible && detail && <DetailDrawer comic={detail} busy={busyIds.includes(detail.id)} onRead={(item) => void updatePersonalStatus(item, "is_read")} onStar={(item) => void updatePersonalStatus(item, "is_starred")} onClose={() => setDetail(null)} onOpenReading={openReading} />}
     </main>
@@ -502,8 +496,15 @@ export function App() {
   /** Toggle between the two explicitly supported themes. */
   function toggleTheme(): void { setTheme((current) => current === "dark" ? "light" : "dark"); }
 
-  if (authenticated === null) return <main className="loading">加载中…</main>;
-  return <>{!authenticated && <button className="theme-toggle" aria-label="切换主题" onClick={toggleTheme}>{theme === "dark" ? "☀" : "☾"}</button>}{authenticated ? <Library onToggleTheme={toggleTheme} onLogout={() => setAuthenticated(false)} /> : <Login onLogin={() => setAuthenticated(true)} />}</>;
+  /** Match Material UI's palette to the persisted application colour mode. */
+  const muiTheme = useMemo(() => createTheme({
+    palette: { mode: theme, primary: { main: theme === "dark" ? "#aebee7" : "#4b628c" }, background: { default: theme === "dark" ? "#14161a" : "#e8edf0", paper: theme === "dark" ? "#232730" : "#ffffff" } },
+    typography: { fontFamily: '"Segoe UI Variable", "Microsoft YaHei UI", system-ui, sans-serif', button: { textTransform: "none" } },
+    shape: { borderRadius: 10 },
+    components: { MuiButton: { defaultProps: { variant: "contained", disableElevation: true } }, MuiTextField: { defaultProps: { size: "small" } } },
+  }), [theme]);
+
+  return <StyledEngineProvider injectFirst><ThemeProvider theme={muiTheme}><CssBaseline />{authenticated === null ? <main className="loading">加载中…</main> : <>{!authenticated && <Button variant="text" className="theme-toggle" aria-label="切换主题" onClick={toggleTheme}>{theme === "dark" ? "☀" : "☾"}</Button>}{authenticated ? <Library onToggleTheme={toggleTheme} onLogout={() => setAuthenticated(false)} /> : <Login onLogin={() => setAuthenticated(true)} />}</>}</ThemeProvider></StyledEngineProvider>;
 }
 
 export { extractQuickRecordId, visibleTags };

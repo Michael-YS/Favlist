@@ -15,6 +15,7 @@ Favlist is a single-user, self-hosted React/FastAPI/SQLite collection library fo
 
 - `backend/app/`: API, database, auth, metadata adapter, jobs, and covers; `backend/tests/`: backend tests.
 - `frontend/src/`: React UI and tests; root `config.yaml`: ordered tag emphasis; `docker-compose.yml`: deployment.
+- Keep the frontend a Vite CSR single-page app with MUI. Prefer browser rendering for new pages; add SSR only for an explicit requirement, given limited deployment-server resources.
 - Every code file needs a concise documentation header; every function/method needs a useful docstring or JSDoc. Keep tests deterministic and mock external services.
 
 ## Security and current state

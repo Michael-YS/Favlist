@@ -1,4 +1,5 @@
 /** Responsive tag-pill presentation with backend-defined ordering and emphasis. */
+import { Chip } from "@mui/material";
 import { visibleTags } from "../lib/tags";
 import type { Tag } from "../types";
 
@@ -6,13 +7,13 @@ interface TagPillsProps { tags: Tag[]; all?: boolean; }
 
 /** Render one concise tag pill, including a warning mark for disliked tags. */
 function TagPill({ tag }: { tag: Tag }) {
-  return <span className={`tag ${tag.emphasis}`}>{tag.emphasis === "disliked" && "⚠ "}{tag.name}</span>;
+  return <Chip size="small" className={`tag ${tag.emphasis}`} label={`${tag.emphasis === "disliked" ? "⚠ " : ""}${tag.name}`} />;
 }
 
 /** Render a pre-sized pill sequence and its folded tag count. */
 function TagSlice({ tags, mobile }: { tags: Tag[]; mobile: boolean }) {
   const { shown, hidden } = visibleTags(tags, mobile);
-  return <>{shown.map((tag) => <TagPill key={tag.name} tag={tag} />)}{hidden > 0 && <span className="tag normal">+{hidden}</span>}</>;
+  return <>{shown.map((tag) => <TagPill key={tag.name} tag={tag} />)}{hidden > 0 && <Chip size="small" className="tag normal" label={`+${hidden}`} />}</>;
 }
 
 /** Render all tags in a detail drawer or responsive folded tags in a list row. */

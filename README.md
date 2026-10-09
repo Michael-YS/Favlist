@@ -22,13 +22,15 @@
 
 | 层 | 实现 |
 | --- | --- |
-| Web | React、TypeScript、Vite；生产环境由 Nginx 提供静态文件和同源 `/api` 代理 |
+| Web | React、TypeScript、MUI、Vite；生产环境由 Nginx 提供静态文件和同源 `/api` 代理 |
 | API | FastAPI、SQLAlchemy asyncio、后台任务队列 |
 | 数据 | SQLite 数据库与本地 WebP 封面缓存 |
 | 整合 | 可替换的元数据适配器与封面缓存 |
 | 部署 | Docker Compose；可选 Caddy 自动 HTTPS |
 
 默认请求链路为：`浏览器 → web (Nginx) → api (FastAPI) → SQLite / 封面缓存`。启用 Caddy profile 后，Caddy 位于 `web` 前方负责公网 TLS。数据库和封面都存放在 `favlist-data` Docker 卷中。
+
+前端采用 CSR：登录、目录、筛选、详情和主题均在浏览器中渲染，通过同源 API 获取数据。生产镜像只用 Node 构建静态文件，运行时由 Nginx 提供文件；不运行 Node 渲染服务。为适应服务器资源限制，新增页面继续优先采用 CSR，只有明确需求才考虑 SSR。
 
 ## 使用
 
